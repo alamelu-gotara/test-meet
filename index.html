@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SyncLite Screen Share</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+</head>
+<body>
+  <div id="root" class="min-h-screen bg-gray-100 flex flex-col items-center p-4"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function App() {
+      const [sessionId, setSessionId] = useState('123'); // Pre-agreed session ID
+      const [stream, setStream] = useState(null);
+      const [peerConnection, setPeerConnection] = useState(null);
+      const [offer, setOffer] = useState('');
+      const [answer, setAnswer] = useState('');
+      const [remoteOffer, setRemoteOffer] = useState('');
+      const [remoteAnswer, setRemoteAnswer] = useState('');
+      const videoRef = useRef(null);
+
+      // Initialize WebRTC
+      const initWebRTC = async (isScreenShare = false) => {
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        });
+        setPeerConnection(pc);
+
+        // Get media (screen or audio)
+        const media = isScreenShare
+          ? await navigator.mediaDevices.getDisplayMedia({ video: true })
+          : await navigator.mediaDevices.getUserMedia({ audio: true });
+        setStream(media);
+        media.getTracks().forEach((track) => pc.addTrack(track, media));
+
+        // Display remote stream
+        pc.ontrack = (event) => {
+          if (videoRef.current) {
+            videoRef.current.srcObject = event.streams[0];
+          }
+        };
+
+        // Generate ICE candidates
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            alert('Copy ICE candidate to other user: ' + JSON.stringify(event.candidate));
+          }
+        };
+
+        // Create offer for initiator
+        if (isScreenShare || !remoteOffer) {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          setOffer(JSON.stringify(offer));
+          alert('Copy this offer to other user: ' + JSON.stringify(offer));
+        }
+
+        return pc;
+      };
+
+      // Start screen sharing
+      const startScreenShare = async () => {
+        const pc = await initWebRTC(true);
+        setPeerConnection(pc);
+      };
+
+      // Join session with audio
+      const joinSession = async () => {
+        const pc = await initWebRTC(false);
+        setPeerConnection(pc);
+      };
+
+      // Handle remote offer
+      const handleRemoteOffer = async () => {
+        if (!peerConnection || !remoteOffer) return;
+        try {
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(JSON.parse(remoteOffer))
+          );
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          setAnswer(JSON.stringify(answer));
+          alert('Copy this answer to other user: ' + JSON.stringify(answer));
+        } catch (e) {
+          alert('Error setting remote offer: ' + e.message);
+        }
+      };
+
+      // Handle remote answer
+      const handleRemoteAnswer = async () => {
+        if (!peerConnection || !remoteAnswer) return;
+        try {
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(JSON.parse(remoteAnswer))
+          );
+        } catch (e) {
+          alert('Error setting remote answer: ' + e.message);
+        }
+      };
+
+      // Clean up WebRTC
+      useEffect(() => {
+        return () => {
+          if (peerConnection) peerConnection.close();
+          if (stream) stream.getTracks().forEach((track) => track.stop());
+        };
+      }, [peerConnection, stream]);
+
+      return (
+        <div className="w-full max-w-md">
+          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Screen Share</h1>
+          <input
+            type="text"
+            value={sessionId}
+            onChange={(e) => setSessionId(e.target.value)}
+            placeholder="Session ID"
+            className="border p-2 mb-2 w-full rounded"
+          />
+          <button
+            onClick={startScreenShare}
+            className="bg-purple-500 text-white p-2 rounded w-full mb-2"
+          >
+            Share Screen
+          </button>
+          <button
+            onClick={joinSession}
+            className="bg-green-500 text-white p-2 rounded w-full mb-2"
+          >
+            Join with Audio
+          </button>
+          <textarea
+            value={remoteOffer}
+            onChange={(e) => setRemoteOffer(e.target.value)}
+            placeholder="Paste remote offer here"
+            className="border p-2 mb-2 w-full rounded h-24"
+          />
+          <button
+            onClick={handleRemoteOffer}
+            className="bg-blue-500 text-white p-2 rounded w-full mb-2"
+          >
+            Set Remote Offer
+          </button>
+          <textarea
+            value={remoteAnswer}
+            onChange={(e) => setRemoteAnswer(e.target.value)}
+            placeholder="Paste remote answer here"
+            className="border p-2 mb-2 w-full rounded h-24"
+          />
+          <button
+            onClick={handleRemoteAnswer}
+            className="bg-blue-500 text-white p-2 rounded w-full mb-2"
+          >
+            Set Remote Answer
+          </button>
+          {stream && (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              className="mt-4 w-full rounded"
+            />
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
