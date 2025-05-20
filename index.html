@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SyncLite Audio V5 Chat</title>
+  <title>SyncLite Audio V6 Chat</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -17,11 +17,16 @@
     const { useState, useEffect, useRef } = React;
 
     function App() {
+      // Configuration - REPLACE WITH YOUR ACTUAL PUSHER CREDENTIALS
+      const PUSHER_APP_KEY = '2d4b87dc9356587cb571'; // Replace with your actual Pusher app key
+      const PUSHER_CLUSTER = 'ap2';
+      
       const [userCount, setUserCount] = useState(0);
-      const [status, setStatus] = useState('Disconnected');
+      const [status, setStatus] = useState('Initializing...');
       const [stream, setStream] = useState(null);
       const [peerConnection, setPeerConnection] = useState(null);
       const [pusherConnected, setPusherConnected] = useState(false);
+      const [isInitiating, setIsInitiating] = useState(false);
       const pusher = useRef(null);
       const channel = useRef(null);
       const audioRef = useRef(null);
@@ -29,83 +34,154 @@
 
       // Initialize Pusher and WebRTC
       useEffect(() => {
+        connectToPusher();
+        
+        return () => {
+          cleanupResources();
+        };
+      }, []);
+      
+      const connectToPusher = () => {
         try {
+          if (PUSHER_APP_KEY === 'YOUR_PUSHER_APP_KEY') {
+            setStatus('Error: Pusher app key not configured');
+            return;
+          }
+          
+          console.log('Connecting to Pusher...');
+          
           // Connect to Pusher with your app key and cluster
-          pusher.current = new Pusher('2d4b87dc9356587cb571', {
-            cluster: 'ap2',
-            forceTLS: true,
+          pusher.current = new Pusher(PUSHER_APP_KEY, {
+            cluster: PUSHER_CLUSTER,
+            forceTLS: false, // Match your dashboard setting
+            enabledTransports: ['ws', 'wss'], // Allow both secure and non-secure connections
           });
 
           pusher.current.connection.bind('error', (err) => {
             console.error('Pusher connection error:', err);
-            setStatus('Error: Failed to connect to Pusher');
-            alert('Failed to connect to Pusher. Check console for details and verify App Key/Cluster.');
+            setStatus(`Error: Failed to connect to Pusher (${err.data?.code || 'Unknown error'})`);
           });
 
           pusher.current.connection.bind('connected', () => {
+            console.log('Successfully connected to Pusher');
             setStatus('Connected to Pusher');
             setPusherConnected(true);
+            subscribeToChannel();
+          });
+          
+          pusher.current.connection.bind('disconnected', () => {
+            console.log('Disconnected from Pusher');
+            setStatus('Pusher disconnected');
+            setPusherConnected(false);
+          });
+        } catch (e) {
+          setStatus(`Error initializing Pusher: ${e.message}`);
+          console.error('Pusher initialization error:', e);
+        }
+      };
+      
+      const subscribeToChannel = () => {
+        try {
+          console.log('Subscribing to channel synclite-channel...');
+          
+          // Use a public channel since we don't have authentication set up
+          channel.current = pusher.current.subscribe('synclite-channel');
+          
+          channel.current.bind('pusher:subscription_succeeded', () => {
+            console.log('Successfully subscribed to channel');
+            setStatus('Subscribed to channel');
+            
+            // Manually set user count to at least 1 when a subscription succeeds
+            setUserCount(prevCount => Math.max(1, prevCount));
+          });
+          
+          channel.current.bind('pusher:subscription_error', (error) => {
+            console.error('Channel subscription error:', error);
+            setStatus(`Channel subscription error: ${error}`);
           });
 
-          channel.current = pusher.current.subscribe('synclite-channel');
-
-          // Update user count
+          // Update user count - Debug subscription counting
           channel.current.bind('pusher:subscription_count', (data) => {
+            console.log('Subscription count event received:', data);
             setUserCount(data.subscription_count);
-            if (data.subscription_count >= 2) {
-              initWebRTC(false); // Auto-start audio chat with 2 users
+            if (data.subscription_count >= 2 && !isInitiating && !peerConnection) {
+              // Auto-start audio chat with 2 users
+              // Uncomment below line if you want auto-start with 2 users
+              // initWebRTC(false);
             }
+          });
+          
+          // Additional event for presence channels
+          channel.current.bind('pusher:member_added', () => {
+            console.log('Member added event received');
+            setUserCount(prevCount => prevCount + 1);
+          });
+          
+          channel.current.bind('pusher:member_removed', () => {
+            console.log('Member removed event received');
+            setUserCount(prevCount => Math.max(0, prevCount - 1));
           });
 
           // Handle WebRTC signaling
-          channel.current.bind('client-offer', async (data) => {
-            if (!peerConnection) await initWebRTC(false);
-            try {
-              await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-              const answer = await peerConnection.createAnswer();
-              await peerConnection.setLocalDescription(answer);
-              channel.current.trigger('client-answer', { answer });
-            } catch (e) {
-              setStatus(`Error setting offer: ${e.message}`);
-              alert(`Error setting offer: ${e.message}`);
-            }
-          });
-
-          channel.current.bind('client-answer', async (data) => {
-            if (peerConnection) {
-              try {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-              } catch (e) {
-                setStatus(`Error setting answer: ${e.message}`);
-                alert(`Error setting answer: ${e.message}`);
-              }
-            }
-          });
-
-          channel.current.bind('client-ice-candidate', async (data) => {
-            if (peerConnection) {
-              try {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-              } catch (e) {
-                setStatus(`Error adding ICE candidate: ${e.message}`);
-                alert(`Error adding ICE candidate: ${e.message}`);
-              }
-            }
-          });
-
-          return () => {
-            pusher.current.disconnect();
-            if (peerConnection) peerConnection.close();
-            if (stream) stream.getTracks().forEach((track) => track.stop());
-          };
+          channel.current.bind('client-offer', handleOffer);
+          channel.current.bind('client-answer', handleAnswer);
+          channel.current.bind('client-ice-candidate', handleIceCandidate);
         } catch (e) {
-          setStatus(`Error initializing Pusher: ${e.message}`);
-          alert(`Error initializing Pusher: ${e.message}`);
+          setStatus(`Error subscribing to channel: ${e.message}`);
+          console.error('Channel subscription error:', e);
         }
-      }, []);
+      };
+      
+      const handleOffer = async (data) => {
+        console.log('Received offer');
+        if (!peerConnection) {
+          const pc = await setupPeerConnection(false);
+          if (!pc) return;
+        }
+        
+        try {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          
+          if (channel.current) {
+            channel.current.trigger('client-answer', { answer });
+            console.log('Answer sent');
+          }
+        } catch (e) {
+          setStatus(`Error handling offer: ${e.message}`);
+          console.error('Error handling offer:', e);
+        }
+      };
+      
+      const handleAnswer = async (data) => {
+        console.log('Received answer');
+        if (peerConnection) {
+          try {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+            console.log('Remote description set successfully');
+          } catch (e) {
+            setStatus(`Error setting answer: ${e.message}`);
+            console.error('Error setting answer:', e);
+          }
+        }
+      };
+      
+      const handleIceCandidate = async (data) => {
+        console.log('Received ICE candidate');
+        if (peerConnection) {
+          try {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            console.log('ICE candidate added successfully');
+          } catch (e) {
+            setStatus(`Error adding ICE candidate: ${e.message}`);
+            console.error('Error adding ICE candidate:', e);
+          }
+        }
+      };
 
-      // Initialize WebRTC
-      const initWebRTC = async (isScreenShare = false) => {
+      // Setup WebRTC peer connection
+      const setupPeerConnection = async (isScreenShare = false) => {
         try {
           const pc = new RTCPeerConnection({
             iceServers: [
@@ -123,97 +199,219 @@
               },
             ],
           });
+          
           setPeerConnection(pc);
-          setStatus('Connecting...');
-
+          
           // Get media
-          const media = isScreenShare
-            ? await navigator.mediaDevices.getDisplayMedia({ video: true })
-            : await navigator.mediaDevices.getUserMedia({ audio: true });
-          setStream(media);
-          media.getTracks().forEach((track) => pc.addTrack(track, media));
+          try {
+            const media = isScreenShare
+              ? await navigator.mediaDevices.getDisplayMedia({ video: true })
+              : await navigator.mediaDevices.getUserMedia({ audio: true });
+            
+            setStream(media);
+            
+            // Add all tracks to the peer connection
+            media.getTracks().forEach((track) => {
+              pc.addTrack(track, media);
+              console.log(`Added ${track.kind} track to peer connection`);
+            });
+          } catch (mediaError) {
+            setStatus(`Media access error: ${mediaError.message}`);
+            console.error('Media access error:', mediaError);
+            return null;
+          }
 
           // Display remote stream
           pc.ontrack = (event) => {
+            console.log(`Received ${event.track.kind} track from remote peer`);
             if (isScreenShare && videoRef.current) {
               videoRef.current.srcObject = event.streams[0];
             } else if (!isScreenShare && audioRef.current) {
               audioRef.current.srcObject = event.streams[0];
             }
-            setStatus('Connected');
+            setStatus('Connected to peer');
           };
 
           // Send ICE candidates
           pc.onicecandidate = (event) => {
-            if (event.candidate) {
+            if (event.candidate && channel.current) {
+              console.log('Sending ICE candidate');
               channel.current.trigger('client-ice-candidate', { candidate: event.candidate });
             }
           };
 
-          // Create offer for initiator
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          channel.current.trigger('client-offer', { offer });
-
           // Monitor ICE state
           pc.oniceconnectionstatechange = () => {
-            setStatus(`ICE state: ${pc.iceConnectionState}`);
-            if (pc.iceConnectionState === 'failed') {
+            const state = pc.iceConnectionState;
+            console.log(`ICE connection state changed to: ${state}`);
+            setStatus(`ICE state: ${state}`);
+            
+            if (state === 'failed') {
               setStatus('Connection failed, try different network');
               pc.restartIce();
+            } else if (state === 'connected' || state === 'completed') {
+              setStatus('Connected to peer');
+            } else if (state === 'disconnected') {
+              setStatus('Peer disconnected');
+            } else if (state === 'closed') {
+              setStatus('Connection closed');
             }
-            if (pc.iceConnectionState === 'connected') {
-              setStatus('Connected');
-            }
+          };
+          
+          pc.onconnectionstatechange = () => {
+            console.log(`Connection state changed to: ${pc.connectionState}`);
+          };
+          
+          pc.onsignalingstatechange = () => {
+            console.log(`Signaling state changed to: ${pc.signalingState}`);
           };
 
           return pc;
         } catch (e) {
-          setStatus(`Error: ${e.message}`);
-          alert(`Error: ${e.message}`);
+          setStatus(`WebRTC setup error: ${e.message}`);
+          console.error('WebRTC setup error:', e);
           return null;
+        }
+      };
+
+      // Initialize WebRTC and create offer
+      const initWebRTC = async (isScreenShare = false) => {
+        if (!pusherConnected) {
+          setStatus('Error: Pusher not connected');
+          return;
+        }
+        
+        setIsInitiating(true);
+        setStatus('Setting up connection...');
+        
+        try {
+          // Close existing connections if any
+          if (peerConnection) {
+            peerConnection.close();
+            setPeerConnection(null);
+          }
+          
+          if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            setStream(null);
+          }
+          
+          const pc = await setupPeerConnection(isScreenShare);
+          if (!pc) {
+            setIsInitiating(false);
+            return;
+          }
+          
+          // Create and send offer
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            
+            if (channel.current) {
+              console.log('Sending offer');
+              channel.current.trigger('client-offer', { offer });
+              setStatus('Offer sent, waiting for answer...');
+            } else {
+              setStatus('Error: Channel not available');
+            }
+          } catch (offerError) {
+            setStatus(`Error creating offer: ${offerError.message}`);
+            console.error('Error creating offer:', offerError);
+          }
+        } catch (e) {
+          setStatus(`Connection failed: ${e.message}`);
+          console.error('Connection failed:', e);
+        } finally {
+          setIsInitiating(false);
+        }
+      };
+
+      // Cleanup resources
+      const cleanupResources = () => {
+        if (pusher.current) {
+          pusher.current.disconnect();
+        }
+        
+        if (peerConnection) {
+          peerConnection.close();
+        }
+        
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
         }
       };
 
       // Start audio chat
       const startAudioChat = async () => {
-        if (!pusherConnected) {
-          alert('Pusher not connected. Check Pusher setup.');
-          return;
-        }
         await initWebRTC(false);
       };
 
       // Start screen sharing
       const startScreenShare = async () => {
-        if (!pusherConnected) {
-          alert('Pusher not connected. Check Pusher setup.');
-          return;
-        }
         await initWebRTC(true);
+      };
+      
+      // End current connection
+      const endConnection = () => {
+        cleanupResources();
+        setPeerConnection(null);
+        setStream(null);
+        setStatus('Disconnected');
       };
 
       return (
-        <div className="w-full max-w-md">
-          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Audio V6 Chat</h1>
-          <p className="text-sm mb-2 text-center">Users on page: {userCount}</p>
-          <p className="text-sm mb-2 text-center">Status: {status}</p>
-          <button
-            onClick={startAudioChat}
-            className="bg-green-500 text-white p-2 rounded w-full mb-2 disabled:opacity-50"
-            disabled={!pusherConnected}
-          >
-            Start Audio Chat
-          </button>
-          <button
-            onClick={startScreenShare}
-            className="bg-purple-500 text-white p-2 rounded w-full mb-2 disabled:opacity-50"
-            disabled={!pusherConnected}
-          >
-            Share Screen
-          </button>
-          <audio ref={audioRef} autoPlay className="w-full" />
-          <video ref={videoRef} autoPlay playsInline className="w-full rounded mt-4" />
+        <div className="w-full max-w-md bg-white rounded-lg shadow-md p-6">
+          <h1 className="text-2xl font-bold mb-4 text-center text-purple-700">SyncLite Audio V6 Chat</h1>
+          
+          <div className="bg-gray-100 rounded p-3 mb-4">
+            <p className="text-sm mb-1"><span className="font-semibold">Users online:</span> {userCount}</p>
+            <p className="text-sm mb-1"><span className="font-semibold">Status:</span> {status}</p>
+          </div>
+          
+          <div className="space-y-2 mb-4">
+            <button
+              onClick={startAudioChat}
+              className="bg-green-500 hover:bg-green-600 text-white p-3 rounded w-full font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!pusherConnected || isInitiating}
+            >
+              {isInitiating ? 'Connecting...' : 'Start Audio Chat'}
+            </button>
+            
+            <button
+              onClick={startScreenShare}
+              className="bg-purple-500 hover:bg-purple-600 text-white p-3 rounded w-full font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!pusherConnected || isInitiating}
+            >
+              Share Screen
+            </button>
+            
+            {(peerConnection || stream) && (
+              <button
+                onClick={endConnection}
+                className="bg-red-500 hover:bg-red-600 text-white p-3 rounded w-full font-semibold"
+              >
+                End Connection
+              </button>
+            )}
+          </div>
+          
+          <div className="space-y-4">
+            <div className={`rounded ${stream ? 'bg-blue-50 p-3' : ''}`}>
+              {stream && stream.getAudioTracks().length > 0 && (
+                <p className="text-sm text-blue-700">Your microphone is active.</p>
+              )}
+              <audio ref={audioRef} autoPlay className="hidden" />
+            </div>
+            
+            <div>
+              {stream && stream.getVideoTracks().length > 0 && (
+                <div className="border-2 border-purple-300 rounded-lg overflow-hidden">
+                  <p className="text-sm bg-purple-100 text-purple-700 p-2">Your screen is being shared</p>
+                  <video ref={videoRef} autoPlay playsInline className="w-full rounded-b-lg" />
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       );
     }
