@@ -9,6 +9,7 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body>
   <div id="root" class="min-h-screen bg-gray-100 flex flex-col items-center p-4"></div>
@@ -16,17 +17,60 @@
     const { useState, useEffect, useRef } = React;
 
     function App() {
-      const [sessionId, setSessionId] = useState('123');
+      const [userCount, setUserCount] = useState(0);
+      const [status, setStatus] = useState('Disconnected');
       const [stream, setStream] = useState(null);
       const [peerConnection, setPeerConnection] = useState(null);
-      const [offer, setOffer] = useState('');
-      const [answer, setAnswer] = useState('');
-      const [remoteOffer, setRemoteOffer] = useState('');
-      const [remoteAnswer, setRemoteAnswer] = useState('');
-      const [iceCandidates, setIceCandidates] = useState([]);
-      const [remoteIceCandidate, setRemoteIceCandidate] = useState('');
-      const [status, setStatus] = useState('Disconnected');
+      const socket = useRef(null);
       const audioRef = useRef(null);
+      const videoRef = useRef(null);
+
+      // Initialize WebSocket and WebRTC
+      useEffect(() => {
+        // Connect to WebSocket server (replace with your server URL)
+        socket.current = io('wss://your-signaling-server-url', { transports: ['websocket'] });
+
+        socket.current.on('connect', () => {
+          setStatus('Connected to server');
+        });
+
+        // Update user count
+        socket.current.on('userCount', (count) => {
+          setUserCount(count);
+        });
+
+        // Initialize WebRTC when two users are present
+        socket.current.on('startWebRTC', () => {
+          initWebRTC(false); // Start with audio
+        });
+
+        // Handle WebRTC signaling
+        socket.current.on('offer', async (offer) => {
+          if (!peerConnection) await initWebRTC(false);
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          socket.current.emit('answer', answer);
+        });
+
+        socket.current.on('answer', async (answer) => {
+          if (peerConnection) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+          }
+        });
+
+        socket.current.on('ice-candidate', async (candidate) => {
+          if (peerConnection) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+          }
+        });
+
+        return () => {
+          socket.current.disconnect();
+          if (peerConnection) peerConnection.close();
+          if (stream) stream.getTracks().forEach((track) => track.stop());
+        };
+      }, []);
 
       // Initialize WebRTC
       const initWebRTC = async (isScreenShare = false) => {
@@ -42,7 +86,7 @@
           setPeerConnection(pc);
           setStatus('Connecting...');
 
-          // Get media (audio or screen)
+          // Get media
           const media = isScreenShare
             ? await navigator.mediaDevices.getDisplayMedia({ video: true })
             : await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -51,32 +95,33 @@
 
           // Display remote stream
           pc.ontrack = (event) => {
-            if (audioRef.current) {
+            if (isScreenShare && videoRef.current) {
+              videoRef.current.srcObject = event.streams[0];
+            } else if (!isScreenShare && audioRef.current) {
               audioRef.current.srcObject = event.streams[0];
-              setStatus('Connected');
             }
+            setStatus('Connected');
           };
 
-          // Collect ICE candidates
+          // Send ICE candidates
           pc.onicecandidate = (event) => {
             if (event.candidate) {
-              setIceCandidates((prev) => [...prev, JSON.stringify(event.candidate)]);
+              socket.current.emit('ice-candidate', event.candidate);
             }
           };
 
           // Create offer for initiator
-          if (!remoteOffer) {
+          if (!isScreenShare) {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-            setOffer(JSON.stringify(offer));
-            setStatus('Offer created, copy and send to other user');
+            socket.current.emit('offer', offer);
           }
 
-          // Monitor ICE connection state
+          // Monitor ICE state
           pc.oniceconnectionstatechange = () => {
             setStatus(`ICE state: ${pc.iceConnectionState}`);
             if (pc.iceConnectionState === 'failed') {
-              setStatus('Connection failed, try restarting or different network');
+              setStatus('Connection failed, try different network');
               pc.restartIce();
             }
             if (pc.iceConnectionState === 'connected') {
@@ -87,170 +132,50 @@
           return pc;
         } catch (e) {
           setStatus(`Error: ${e.message}`);
-          alert(`Error initializing WebRTC: ${e.message}`);
+          alert(`Error: ${e.message}`);
           return null;
         }
       };
 
       // Start audio chat
       const startAudioChat = async () => {
-        const pc = await initWebRTC(false);
-        if (pc) setPeerConnection(pc);
+        if (userCount < 2) {
+          alert('Need at least 2 users to start chat');
+          return;
+        }
+        await initWebRTC(false);
       };
 
       // Start screen sharing
       const startScreenShare = async () => {
-        const pc = await initWebRTC(true);
-        if (pc) setPeerConnection(pc);
-      };
-
-      // Handle remote offer
-      const handleRemoteOffer = async () => {
-        if (!peerConnection || !remoteOffer) {
-          setStatus('Error: Start audio chat first or enter remote offer');
-          alert('Error: Start audio chat first or enter remote offer');
+        if (userCount < 2) {
+          alert('Need at least 2 users to start screen sharing');
           return;
         }
-        try {
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(JSON.parse(remoteOffer))
-          );
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          setAnswer(JSON.stringify(answer));
-          setStatus('Answer created, copy and send to other user');
-        } catch (e) {
-          setStatus(`Error setting remote offer: ${e.message}`);
-          alert(`Error setting remote offer: ${e.message}`);
-        }
+        await initWebRTC(true);
       };
-
-      // Handle remote answer
-      const handleRemoteAnswer = async () => {
-        if (!peerConnection || !remoteAnswer) {
-          setStatus('Error: Start audio chat first or enter remote answer');
-          alert('Error: Start audio chat first or enter remote answer');
-          return;
-        }
-        try {
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(JSON.parse(remoteAnswer))
-          );
-          setStatus('Answer set, waiting for connection');
-        } catch (e) {
-          setStatus(`Error setting remote answer: ${e.message}`);
-          alert(`Error setting remote answer: ${e.message}`);
-        }
-      };
-
-      // Handle remote ICE candidate
-      const handleRemoteIceCandidate = async () => {
-        if (!peerConnection || !remoteIceCandidate) {
-          setStatus('Error: Start audio chat first or enter ICE candidate');
-          alert('Error: Start audio chat first or enter ICE candidate');
-          return;
-        }
-        try {
-          await peerConnection.addIceCandidate(
-            new RTCIceCandidate(JSON.parse(remoteIceCandidate))
-          );
-          setStatus('ICE candidate added, waiting for connection');
-        } catch (e) {
-          setStatus(`Error adding ICE candidate: ${e.message}`);
-          alert(`Error adding ICE candidate: ${e.message}`);
-        }
-      };
-
-      // Clean up WebRTC
-      useEffect(() => {
-        return () => {
-          if (peerConnection) peerConnection.close();
-          if (stream) stream.getTracks().forEach((track) => track.stop());
-        };
-      }, [peerConnection, stream]);
 
       return (
         <div className="w-full max-w-md">
-          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Audio Chat V3</h1>
+          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Audio V4 Chat</h1>
+          <p className="text-sm mb-2 text-center">Users on page: {userCount}</p>
           <p className="text-sm mb-2 text-center">Status: {status}</p>
-          <input
-            type="text"
-            value={sessionId}
-            onChange={(e) => setSessionId(e.target.value)}
-            placeholder="Session ID"
-            className="border p-2 mb-2 w-full rounded"
-          />
           <button
             onClick={startAudioChat}
             className="bg-green-500 text-white p-2 rounded w-full mb-2"
+            disabled={userCount < 2}
           >
             Start Audio Chat
           </button>
           <button
             onClick={startScreenShare}
             className="bg-purple-500 text-white p-2 rounded w-full mb-2"
+            disabled={userCount < 2}
           >
             Share Screen
           </button>
-          <textarea
-            value={offer}
-            readOnly
-            placeholder="Your offer (copy this)"
-            className="border p-2 mb-2 w-full rounded h-24 bg-gray-200"
-          />
-          <textarea
-            value={answer}
-            readOnly
-            placeholder="Your answer (copy this)"
-            className="border p-2 mb-2 w-full rounded h-24 bg-gray-200"
-          />
-          <textarea
-            value={iceCandidates.join('\n')}
-            readOnly
-            placeholder="Your ICE candidates (copy these)"
-            className="border p-2 mb-2 w-full rounded h-24 bg-gray-200"
-          />
-          <textarea
-            value={remoteOffer}
-            onChange={(e) => setRemoteOffer(e.target.value)}
-            placeholder="Paste remote offer here"
-            className="border p-2 mb-2 w-full rounded h-24"
-          />
-          <button
-            onClick={handleRemoteOffer}
-            className="bg-blue-500 text-white p-2 rounded w-full mb-2"
-          >
-            Set Remote Offer
-          </button>
-          <textarea
-            value={remoteAnswer}
-            onChange={(e) => setRemoteAnswer(e.target.value)}
-            placeholder="Paste remote answer here"
-            className="border p-2 mb-2 w-full rounded h-24"
-          />
-          <button
-            onClick={handleRemoteAnswer}
-            className="bg-blue-500 text-white p-2 rounded w-full mb-2"
-          >
-            Set Remote Answer
-          </button>
-          <textarea
-            value={remoteIceCandidate}
-            onChange={(e) => setRemoteIceCandidate(e.target.value)}
-            placeholder="Paste remote ICE candidate here"
-            className="border p-2 mb-2 w-full rounded h-24"
-          />
-          <button
-            onClick={handleRemoteIceCandidate}
-            className="bg-blue-500 text-white p-2 rounded w-full mb-2"
-          >
-            Add ICE Candidate
-          </button>
-          <audio
-            ref={audioRef}
-            autoPlay
-            className="w-full"
-          />
+          <audio ref={audioRef} autoPlay className="w-full" />
+          <video ref={videoRef} autoPlay playsInline className="w-full rounded mt-4" />
         </div>
       );
     }
