@@ -16,52 +16,79 @@
     const { useState, useEffect, useRef } = React;
 
     function App() {
-      const [sessionId, setSessionId] = useState('123'); // Pre-agreed session ID
+      const [sessionId, setSessionId] = useState('123');
       const [stream, setStream] = useState(null);
       const [peerConnection, setPeerConnection] = useState(null);
       const [offer, setOffer] = useState('');
       const [answer, setAnswer] = useState('');
       const [remoteOffer, setRemoteOffer] = useState('');
       const [remoteAnswer, setRemoteAnswer] = useState('');
+      const [iceCandidates, setIceCandidates] = useState([]);
+      const [remoteIceCandidate, setRemoteIceCandidate] = useState('');
+      const [status, setStatus] = useState('Disconnected');
       const videoRef = useRef(null);
+      const localVideoRef = useRef(null);
 
       // Initialize WebRTC
       const initWebRTC = async (isScreenShare = false) => {
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-        });
-        setPeerConnection(pc);
+        try {
+          const pc = new RTCPeerConnection({
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' },
+            ],
+          });
+          setPeerConnection(pc);
+          setStatus('Connecting...');
 
-        // Get media (screen or audio)
-        const media = isScreenShare
-          ? await navigator.mediaDevices.getDisplayMedia({ video: true })
-          : await navigator.mediaDevices.getUserMedia({ audio: true });
-        setStream(media);
-        media.getTracks().forEach((track) => pc.addTrack(track, media));
+          // Get media
+          const media = isScreenShare
+            ? await navigator.mediaDevices.getDisplayMedia({ video: true })
+            : await navigator.mediaDevices.getUserMedia({ audio: true });
+          setStream(media);
+          media.getTracks().forEach((track) => pc.addTrack(track, media));
 
-        // Display remote stream
-        pc.ontrack = (event) => {
-          if (videoRef.current) {
-            videoRef.current.srcObject = event.streams[0];
+          // Display local stream
+          if (localVideoRef.current && isScreenShare) {
+            localVideoRef.current.srcObject = media;
           }
-        };
 
-        // Generate ICE candidates
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
-            alert('Copy ICE candidate to other user: ' + JSON.stringify(event.candidate));
+          // Display remote stream
+          pc.ontrack = (event) => {
+            if (videoRef.current) {
+              videoRef.current.srcObject = event.streams[0];
+              setStatus('Connected');
+            }
+          };
+
+          // Collect ICE candidates
+          pc.onicecandidate = (event) => {
+            if (event.candidate) {
+              setIceCandidates((prev) => [...prev, JSON.stringify(event.candidate)]);
+            }
+          };
+
+          // Create offer for initiator
+          if (!remoteOffer) {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            setOffer(JSON.stringify(offer));
+            setStatus('Offer created, share with other user');
           }
-        };
 
-        // Create offer for initiator
-        if (isScreenShare || !remoteOffer) {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          setOffer(JSON.stringify(offer));
-          alert('Copy this offer to other user: ' + JSON.stringify(offer));
+          pc.oniceconnectionstatechange = () => {
+            setStatus(`ICE state: ${pc.iceConnectionState}`);
+            if (pc.iceConnectionState === 'failed') {
+              setStatus('Connection failed, try restarting');
+            }
+          };
+
+          return pc;
+        } catch (e) {
+          setStatus(`Error: ${e.message}`);
+          alert(`Error initializing WebRTC: ${e.message}`);
         }
-
-        return pc;
       };
 
       // Start screen sharing
@@ -78,7 +105,10 @@
 
       // Handle remote offer
       const handleRemoteOffer = async () => {
-        if (!peerConnection || !remoteOffer) return;
+        if (!peerConnection || !remoteOffer) {
+          setStatus('Error: No peer connection or remote offer');
+          return;
+        }
         try {
           await peerConnection.setRemoteDescription(
             new RTCSessionDescription(JSON.parse(remoteOffer))
@@ -86,21 +116,44 @@
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
           setAnswer(JSON.stringify(answer));
-          alert('Copy this answer to other user: ' + JSON.stringify(answer));
+          setStatus('Answer created, share with other user');
         } catch (e) {
-          alert('Error setting remote offer: ' + e.message);
+          setStatus(`Error setting remote offer: ${e.message}`);
+          alert(`Error setting remote offer: ${e.message}`);
         }
       };
 
       // Handle remote answer
       const handleRemoteAnswer = async () => {
-        if (!peerConnection || !remoteAnswer) return;
+        if (!peerConnection || !remoteAnswer) {
+          setStatus('Error: No peer connection or remote answer');
+          return;
+        }
         try {
           await peerConnection.setRemoteDescription(
             new RTCSessionDescription(JSON.parse(remoteAnswer))
           );
+          setStatus('Connected');
         } catch (e) {
-          alert('Error setting remote answer: ' + e.message);
+          setStatus(`Error setting remote answer: ${e.message}`);
+          alert(`Error setting remote answer: ${e.message}`);
+        }
+      };
+
+      // Handle remote ICE candidate
+      const handleRemoteIceCandidate = async () => {
+        if (!peerConnection || !remoteIceCandidate) {
+          setStatus('Error: No peer connection or ICE candidate');
+          return;
+        }
+        try {
+          await peerConnection.addIceCandidate(
+            new RTCIceCandidate(JSON.parse(remoteIceCandidate))
+          );
+          setStatus('ICE candidate added');
+        } catch (e) {
+          setStatus(`Error adding ICE candidate: ${e.message}`);
+          alert(`Error adding ICE candidate: ${e.message}`);
         }
       };
 
@@ -114,7 +167,8 @@
 
       return (
         <div className="w-full max-w-md">
-          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Screen Share</h1>
+          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Screen Share V2</h1>
+          <p className="text-sm mb-2 text-center">Status: {status}</p>
           <input
             type="text"
             value={sessionId}
@@ -134,6 +188,24 @@
           >
             Join with Audio
           </button>
+          <textarea
+            value={offer}
+            readOnly
+            placeholder="Your offer (copy this)"
+            className="border p-2 mb-2 w-full rounded h-24 bg-gray-200"
+          />
+          <textarea
+            value={answer}
+            readOnly
+            placeholder="Your answer (copy this)"
+            className="border p-2 mb-2 w-full rounded h-24 bg-gray-200"
+          />
+          <textarea
+            value={iceCandidates.join('\n')}
+            readOnly
+            placeholder="Your ICE candidates (copy these)"
+            className="border p-2 mb-2 w-full rounded h-24 bg-gray-200"
+          />
           <textarea
             value={remoteOffer}
             onChange={(e) => setRemoteOffer(e.target.value)}
@@ -158,14 +230,39 @@
           >
             Set Remote Answer
           </button>
-          {stream && (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              className="mt-4 w-full rounded"
-            />
-          )}
+          <textarea
+            value={remoteIceCandidate}
+            onChange={(e) => setRemoteIceCandidate(e.target.value)}
+            placeholder="Paste remote ICE candidate here"
+            className="border p-2 mb-2 w-full rounded h-24"
+          />
+          <button
+            onClick={handleRemoteIceCandidate}
+            className="bg-blue-500 text-white p-2 rounded w-full mb-2"
+          >
+            Add ICE Candidate
+          </button>
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold mb-2">Local Stream</h2>
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full rounded"
+              />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold mb-2">Remote Stream</h2>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className="w-full rounded"
+              />
+            </div>
+          </div>
         </div>
       );
     }
