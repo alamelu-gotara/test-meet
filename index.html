@@ -74,13 +74,18 @@
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             setOffer(JSON.stringify(offer));
-            setStatus('Offer created, share with other user');
+            setStatus('Offer created, copy and send to other user');
           }
 
+          // Monitor ICE connection state
           pc.oniceconnectionstatechange = () => {
             setStatus(`ICE state: ${pc.iceConnectionState}`);
             if (pc.iceConnectionState === 'failed') {
-              setStatus('Connection failed, try restarting');
+              setStatus('Connection failed, try restarting or different network');
+              pc.restartIce(); // Attempt to restart ICE negotiation
+            }
+            if (pc.iceConnectionState === 'connected') {
+              setStatus('Connected');
             }
           };
 
@@ -88,25 +93,27 @@
         } catch (e) {
           setStatus(`Error: ${e.message}`);
           alert(`Error initializing WebRTC: ${e.message}`);
+          return null;
         }
       };
 
       // Start screen sharing
       const startScreenShare = async () => {
         const pc = await initWebRTC(true);
-        setPeerConnection(pc);
+        if (pc) setPeerConnection(pc);
       };
 
       // Join session with audio
       const joinSession = async () => {
         const pc = await initWebRTC(false);
-        setPeerConnection(pc);
+        if (pc) setPeerConnection(pc);
       };
 
       // Handle remote offer
       const handleRemoteOffer = async () => {
         if (!peerConnection || !remoteOffer) {
-          setStatus('Error: No peer connection or remote offer');
+          setStatus('Error: Initialize WebRTC first or enter remote offer');
+          alert('Error: Initialize WebRTC first or enter remote offer');
           return;
         }
         try {
@@ -116,7 +123,7 @@
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
           setAnswer(JSON.stringify(answer));
-          setStatus('Answer created, share with other user');
+          setStatus('Answer created, copy and send to other user');
         } catch (e) {
           setStatus(`Error setting remote offer: ${e.message}`);
           alert(`Error setting remote offer: ${e.message}`);
@@ -126,14 +133,15 @@
       // Handle remote answer
       const handleRemoteAnswer = async () => {
         if (!peerConnection || !remoteAnswer) {
-          setStatus('Error: No peer connection or remote answer');
+          setStatus('Error: Initialize WebRTC first or enter remote answer');
+          alert('Error: Initialize WebRTC first or enter remote answer');
           return;
         }
         try {
           await peerConnection.setRemoteDescription(
             new RTCSessionDescription(JSON.parse(remoteAnswer))
           );
-          setStatus('Connected');
+          setStatus('Answer set, waiting for connection');
         } catch (e) {
           setStatus(`Error setting remote answer: ${e.message}`);
           alert(`Error setting remote answer: ${e.message}`);
@@ -143,14 +151,15 @@
       // Handle remote ICE candidate
       const handleRemoteIceCandidate = async () => {
         if (!peerConnection || !remoteIceCandidate) {
-          setStatus('Error: No peer connection or ICE candidate');
+          setStatus('Error: Initialize WebRTC first or enter ICE candidate');
+          alert('Error: Initialize WebRTC first or enter ICE candidate');
           return;
         }
         try {
           await peerConnection.addIceCandidate(
             new RTCIceCandidate(JSON.parse(remoteIceCandidate))
           );
-          setStatus('ICE candidate added');
+          setStatus('ICE candidate added, waiting for connection');
         } catch (e) {
           setStatus(`Error adding ICE candidate: ${e.message}`);
           alert(`Error adding ICE candidate: ${e.message}`);
@@ -167,7 +176,7 @@
 
       return (
         <div className="w-full max-w-md">
-          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Screen Share V2</h1>
+          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Screen Share</h1>
           <p className="text-sm mb-2 text-center">Status: {status}</p>
           <input
             type="text"
