@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SyncLite Screen Share</title>
+  <title>SyncLite Audio Chat</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -26,8 +26,7 @@
       const [iceCandidates, setIceCandidates] = useState([]);
       const [remoteIceCandidate, setRemoteIceCandidate] = useState('');
       const [status, setStatus] = useState('Disconnected');
-      const videoRef = useRef(null);
-      const localVideoRef = useRef(null);
+      const audioRef = useRef(null);
 
       // Initialize WebRTC
       const initWebRTC = async (isScreenShare = false) => {
@@ -37,27 +36,23 @@
               { urls: 'stun:stun.l.google.com:19302' },
               { urls: 'stun:stun1.l.google.com:19302' },
               { urls: 'stun:stun2.l.google.com:19302' },
+              { urls: 'stun:stun3.l.google.com:19302' },
             ],
           });
           setPeerConnection(pc);
           setStatus('Connecting...');
 
-          // Get media
+          // Get media (audio or screen)
           const media = isScreenShare
             ? await navigator.mediaDevices.getDisplayMedia({ video: true })
             : await navigator.mediaDevices.getUserMedia({ audio: true });
           setStream(media);
           media.getTracks().forEach((track) => pc.addTrack(track, media));
 
-          // Display local stream
-          if (localVideoRef.current && isScreenShare) {
-            localVideoRef.current.srcObject = media;
-          }
-
           // Display remote stream
           pc.ontrack = (event) => {
-            if (videoRef.current) {
-              videoRef.current.srcObject = event.streams[0];
+            if (audioRef.current) {
+              audioRef.current.srcObject = event.streams[0];
               setStatus('Connected');
             }
           };
@@ -82,7 +77,7 @@
             setStatus(`ICE state: ${pc.iceConnectionState}`);
             if (pc.iceConnectionState === 'failed') {
               setStatus('Connection failed, try restarting or different network');
-              pc.restartIce(); // Attempt to restart ICE negotiation
+              pc.restartIce();
             }
             if (pc.iceConnectionState === 'connected') {
               setStatus('Connected');
@@ -97,23 +92,23 @@
         }
       };
 
+      // Start audio chat
+      const startAudioChat = async () => {
+        const pc = await initWebRTC(false);
+        if (pc) setPeerConnection(pc);
+      };
+
       // Start screen sharing
       const startScreenShare = async () => {
         const pc = await initWebRTC(true);
         if (pc) setPeerConnection(pc);
       };
 
-      // Join session with audio
-      const joinSession = async () => {
-        const pc = await initWebRTC(false);
-        if (pc) setPeerConnection(pc);
-      };
-
       // Handle remote offer
       const handleRemoteOffer = async () => {
         if (!peerConnection || !remoteOffer) {
-          setStatus('Error: Initialize WebRTC first or enter remote offer');
-          alert('Error: Initialize WebRTC first or enter remote offer');
+          setStatus('Error: Start audio chat first or enter remote offer');
+          alert('Error: Start audio chat first or enter remote offer');
           return;
         }
         try {
@@ -133,8 +128,8 @@
       // Handle remote answer
       const handleRemoteAnswer = async () => {
         if (!peerConnection || !remoteAnswer) {
-          setStatus('Error: Initialize WebRTC first or enter remote answer');
-          alert('Error: Initialize WebRTC first or enter remote answer');
+          setStatus('Error: Start audio chat first or enter remote answer');
+          alert('Error: Start audio chat first or enter remote answer');
           return;
         }
         try {
@@ -151,8 +146,8 @@
       // Handle remote ICE candidate
       const handleRemoteIceCandidate = async () => {
         if (!peerConnection || !remoteIceCandidate) {
-          setStatus('Error: Initialize WebRTC first or enter ICE candidate');
-          alert('Error: Initialize WebRTC first or enter ICE candidate');
+          setStatus('Error: Start audio chat first or enter ICE candidate');
+          alert('Error: Start audio chat first or enter ICE candidate');
           return;
         }
         try {
@@ -176,7 +171,7 @@
 
       return (
         <div className="w-full max-w-md">
-          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Screen Share</h1>
+          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Audio Chat V3</h1>
           <p className="text-sm mb-2 text-center">Status: {status}</p>
           <input
             type="text"
@@ -186,16 +181,16 @@
             className="border p-2 mb-2 w-full rounded"
           />
           <button
+            onClick={startAudioChat}
+            className="bg-green-500 text-white p-2 rounded w-full mb-2"
+          >
+            Start Audio Chat
+          </button>
+          <button
             onClick={startScreenShare}
             className="bg-purple-500 text-white p-2 rounded w-full mb-2"
           >
             Share Screen
-          </button>
-          <button
-            onClick={joinSession}
-            className="bg-green-500 text-white p-2 rounded w-full mb-2"
-          >
-            Join with Audio
           </button>
           <textarea
             value={offer}
@@ -251,27 +246,11 @@
           >
             Add ICE Candidate
           </button>
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="flex-1">
-              <h2 className="text-lg font-semibold mb-2">Local Stream</h2>
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full rounded"
-              />
-            </div>
-            <div className="flex-1">
-              <h2 className="text-lg font-semibold mb-2">Remote Stream</h2>
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                className="w-full rounded"
-              />
-            </div>
-          </div>
+          <audio
+            ref={audioRef}
+            autoPlay
+            className="w-full"
+          />
         </div>
       );
     }
