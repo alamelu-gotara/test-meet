@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SyncLite Screen Share Broadcast</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+</head>
+<body>
+  <div id="root" class="min-h-screen bg-gray-100 flex flex-col items-center p-4"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function App() {
+      const [peerId, setPeerId] = useState('');
+      const [connStatus, setConnStatus] = useState('Not connected');
+      const [peer, setPeer] = useState(null);
+      const [stream, setStream] = useState(null);
+      const [remoteStream, setRemoteStream] = useState(null);
+      const [isHost, setIsHost] = useState(false);
+      const [isScreenSharing, setIsScreenSharing] = useState(false);
+
+      const videoRef = useRef(null);
+
+      // Determine if this user is the host (via URL)
+      useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        setIsHost(params.get('host') === '1');
+      }, []);
+
+      // Initialize PeerJS and set up host/viewer logic
+      useEffect(() => {
+        const id = isHost ? "host" : undefined;
+        const newPeer = new Peer(id, { debug: 2 });
+        setPeer(newPeer);
+
+        newPeer.on('open', id => {
+          setPeerId(id);
+          setConnStatus(isHost
+            ? "You are the host. Click 'Share Screen' to broadcast."
+            : "You are a viewer. Waiting for host...");
+          // If viewer, try to connect to host
+          if (!isHost) {
+            connectToHost(newPeer);
+          }
+        });
+
+        // Host: answer incoming calls with the current screen stream
+        if (isHost) {
+          newPeer.on('call', call => {
+            if (stream) {
+              call.answer(stream);
+              setConnStatus("Viewer connected!");
+            } else {
+              call.close();
+              setConnStatus("Start screen sharing to allow viewers.");
+            }
+          });
+        }
+
+        // Viewer: handle incoming stream from host
+        if (!isHost) {
+          newPeer.on('call', call => {
+            call.on('stream', remote => {
+              setRemoteStream(remote);
+              setConnStatus("Watching host's screen");
+            });
+            call.on('close', () => {
+              setRemoteStream(null);
+              setConnStatus("Host disconnected");
+            });
+          });
+        }
+
+        return () => newPeer.destroy();
+        // eslint-disable-next-line
+      }, [isHost, stream]);
+
+      // Viewer: call host to get stream
+      const connectToHost = (peerInstance) => {
+        const call = peerInstance.call("host", null);
+        call.on('stream', remote => {
+          setRemoteStream(remote);
+          setConnStatus("Watching host's screen");
+        });
+        call.on('close', () => {
+          setRemoteStream(null);
+          setConnStatus("Host disconnected");
+        });
+      };
+
+      // Host: start screen sharing
+      const startScreenShare = async () => {
+        setConnStatus("Sharing screen...");
+        try {
+          const localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+          setStream(localStream);
+          setIsScreenSharing(true);
+          setConnStatus("Screen sharing. Viewers can now see your screen.");
+        } catch (err) {
+          setConnStatus("Error: " + err.message);
+        }
+      };
+
+      // Play remote video
+      useEffect(() => {
+        if (remoteStream && videoRef.current) {
+          videoRef.current.srcObject = remoteStream;
+        }
+      }, [remoteStream]);
+
+      // Host: preview their own screen
+      useEffect(() => {
+        if (isHost && stream && videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      }, [stream, isHost]);
+
+      return (
+        <div className="w-full max-w-3xl bg-white rounded-lg shadow-md p-6 flex flex-col items-center">
+          <h1 className="text-3xl font-bold mb-6 text-center text-purple-700">SyncLite Screen Share Broadcast V1</h1>
+          <div className="bg-gray-100 rounded p-4 mb-6 w-full max-w-xl">
+            <p className="text-base mb-2">
+              <span className="font-semibold">Your Peer ID:</span>
+              <span className="text-blue-600 ml-2">{peerId || '...'}</span>
+            </p>
+            <p className="text-base mb-2">
+              <span className="font-semibold">Status:</span> {connStatus}
+            </p>
+          </div>
+          {isHost && (
+            <button
+              onClick={startScreenShare}
+              className="bg-purple-600 hover:bg-purple-700 text-white px-8 py-3 rounded text-lg font-semibold mb-6"
+              disabled={isScreenSharing}
+            >
+              {isScreenSharing ? "Screen Sharing..." : "Share Screen"}
+            </button>
+          )}
+          <div className="flex justify-center items-center w-full">
+            {(isHost && stream) || (!isHost && remoteStream) ? (
+              <video
+                ref={videoRef}
+                autoPlay
+                controls
+                className="rounded-lg border shadow-lg bg-black"
+                style={{
+                  width: "100%",
+                  maxWidth: "900px",
+                  height: "60vh",
+                  minHeight: "400px",
+                  maxHeight: "70vh",
+                  objectFit: "contain"
+                }}
+                muted={isHost}
+              />
+            ) : (
+              <div className="w-full flex flex-col items-center justify-center h-[400px] text-gray-400 text-2xl">
+                {isHost
+                  ? "Start screen sharing to broadcast to viewers."
+                  : "Waiting for host to start screen sharing..."}
+              </div>
+            )}
+          </div>
+          <div className="mt-6 text-sm text-gray-500 max-w-xl text-center">
+            <p>
+              <span className="font-semibold">Host:</span> Open this page with <span className="font-mono bg-gray-200 px-1 rounded">?host=1</span> in the URL to share your screen.<br />
+              <span className="font-semibold">Viewers:</span> Just open the page. You will see the host's screen automatically if the host is live.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
