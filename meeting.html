@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SyncLite Screen Share Broadcast</title>
+  <title>SyncLite Screen Share Broadcast V2</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -24,6 +24,7 @@
       const [remoteStream, setRemoteStream] = useState(null);
       const [isHost, setIsHost] = useState(false);
       const [isScreenSharing, setIsScreenSharing] = useState(false);
+      const [viewerCall, setViewerCall] = useState(null);
 
       const videoRef = useRef(null);
 
@@ -56,6 +57,11 @@
             if (stream) {
               call.answer(stream);
               setConnStatus("Viewer connected!");
+              // When the host stops sharing, close the call
+              stream.getVideoTracks()[0].onended = () => {
+                call.close();
+                cleanupHost();
+              };
             } else {
               call.close();
               setConnStatus("Start screen sharing to allow viewers.");
@@ -66,31 +72,74 @@
         // Viewer: handle incoming stream from host
         if (!isHost) {
           newPeer.on('call', call => {
+            setViewerCall(call);
             call.on('stream', remote => {
               setRemoteStream(remote);
               setConnStatus("Watching host's screen");
+              // When host stops sharing, cleanup
+              remote.getVideoTracks()[0].onended = () => {
+                setRemoteStream(null);
+                setConnStatus("Host stopped sharing.");
+              };
             });
             call.on('close', () => {
               setRemoteStream(null);
-              setConnStatus("Host disconnected");
+              setConnStatus("Host disconnected.");
             });
           });
         }
 
-        return () => newPeer.destroy();
+        return () => {
+          newPeer.destroy();
+          cleanupHost();
+          cleanupViewer();
+        };
         // eslint-disable-next-line
       }, [isHost, stream]);
 
       // Viewer: call host to get stream
       const connectToHost = (peerInstance) => {
+        // Try to call the host every 5 seconds until successful
+        let interval = setInterval(() => {
+          if (!remoteStream) {
+            const call = peerInstance.call("host", null);
+            setViewerCall(call);
+            call.on('stream', remote => {
+              setRemoteStream(remote);
+              setConnStatus("Watching host's screen");
+              // When host stops sharing, cleanup
+              remote.getVideoTracks()[0].onended = () => {
+                setRemoteStream(null);
+                setConnStatus("Host stopped sharing.");
+              };
+              clearInterval(interval); // Stop retrying once stream received
+            });
+            call.on('close', () => {
+              setRemoteStream(null);
+              setConnStatus("Host disconnected.");
+              // Try to reconnect if host comes back
+              if (!remoteStream) connectToHost(peerInstance);
+            });
+          } else {
+            clearInterval(interval);
+          }
+        }, 5000);
+        // Initial attempt
         const call = peerInstance.call("host", null);
+        setViewerCall(call);
         call.on('stream', remote => {
           setRemoteStream(remote);
           setConnStatus("Watching host's screen");
+          remote.getVideoTracks()[0].onended = () => {
+            setRemoteStream(null);
+            setConnStatus("Host stopped sharing.");
+          };
+          clearInterval(interval);
         });
         call.on('close', () => {
           setRemoteStream(null);
-          setConnStatus("Host disconnected");
+          setConnStatus("Host disconnected.");
+          if (!remoteStream) connectToHost(peerInstance);
         });
       };
 
@@ -102,28 +151,46 @@
           setStream(localStream);
           setIsScreenSharing(true);
           setConnStatus("Screen sharing. Viewers can now see your screen.");
+
+          // Listen for when user stops sharing via browser UI
+          localStream.getVideoTracks()[0].onended = () => {
+            cleanupHost();
+            setConnStatus("Screen sharing stopped.");
+          };
         } catch (err) {
           setConnStatus("Error: " + err.message);
         }
       };
 
-      // Play remote video
-      useEffect(() => {
-        if (remoteStream && videoRef.current) {
-          videoRef.current.srcObject = remoteStream;
+      // Host: cleanup when sharing stops
+      const cleanupHost = () => {
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
         }
-      }, [remoteStream]);
+        setStream(null);
+        setIsScreenSharing(false);
+      };
 
-      // Host: preview their own screen
+      // Viewer: cleanup when host disconnects
+      const cleanupViewer = () => {
+        if (viewerCall) viewerCall.close();
+        setViewerCall(null);
+        setRemoteStream(null);
+      };
+
+      // Play video
       useEffect(() => {
-        if (isHost && stream && videoRef.current) {
+        if ((isHost && stream && videoRef.current)) {
           videoRef.current.srcObject = stream;
         }
-      }, [stream, isHost]);
+        if (!isHost && remoteStream && videoRef.current) {
+          videoRef.current.srcObject = remoteStream;
+        }
+      }, [stream, remoteStream, isHost]);
 
       return (
         <div className="w-full max-w-3xl bg-white rounded-lg shadow-md p-6 flex flex-col items-center">
-          <h1 className="text-3xl font-bold mb-6 text-center text-purple-700">SyncLite Screen Share Broadcast V1</h1>
+          <h1 className="text-3xl font-bold mb-6 text-center text-purple-700">SyncLite Screen Share Broadcast V2</h1>
           <div className="bg-gray-100 rounded p-4 mb-6 w-full max-w-xl">
             <p className="text-base mb-2">
               <span className="font-semibold">Your Peer ID:</span>
