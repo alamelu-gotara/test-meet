@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Screen Share V7</title>
+  <title>SyncLite Screen Share V8</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -34,18 +34,23 @@
           setStatus('Ready');
         });
 
-        // Host handles incoming calls
         p.on('call', call => {
-          if (isHost && stream) {
-            call.answer(stream);
-            setStatus('Viewer connected');
-          } else {
-            setStatus('Viewer received a call');
+          if (!isHost) {
+            call.answer(); // Viewer answers call
             call.on('stream', remote => {
               setRemoteStream(remote);
               setStatus('Receiving screen...');
             });
           }
+        });
+
+        p.on('connection', conn => {
+          conn.on('open', () => {
+            if (isHost && stream) {
+              const call = p.call(conn.peer, stream); // Host calls viewer
+              setStatus('Connected to viewer');
+            }
+          });
         });
 
         setPeer(p);
@@ -60,13 +65,16 @@
         if (remoteStream && videoRef.current) {
           videoRef.current.srcObject = remoteStream;
         }
-      }, [remoteStream]);
+        if (stream && isHost && videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      }, [remoteStream, stream]);
 
       const startScreenShare = async () => {
         try {
-          const media = await navigator.mediaDevices.getDisplayMedia({ video: true });
+          const media = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
           setStream(media);
-          setStatus('Sharing screen...');
+          setStatus('Screen sharing started');
 
           media.getTracks()[0].addEventListener('ended', () => {
             setStream(null);
@@ -85,7 +93,7 @@
 
       return (
         <div className="max-w-md w-full bg-white shadow-lg rounded p-6">
-          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite Meeting Screen V7</h1>
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V8</h1>
 
           <div className="flex items-center space-x-2 mb-4">
             <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
@@ -128,6 +136,8 @@
               <video
                 ref={videoRef}
                 autoPlay
+                playsInline
+                muted={isHost}
                 controls
                 className="w-full rounded shadow"
                 style={{ minHeight: 300 }}
