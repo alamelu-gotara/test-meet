@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>One-to-Many Screen Share (PeerJS, Serverless)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+</head>
+<body>
+  <div id="root" class="min-h-screen bg-gray-100 flex flex-col items-center p-4"></div>
+  <script type="text/babel">
+    const { useState, useRef } = React;
+
+    function App() {
+      const [role, setRole] = useState(null); // 'presenter' or 'viewer'
+      const [peerId, setPeerId] = useState('');
+      const [presenterId, setPresenterId] = useState('');
+      const [status, setStatus] = useState('Idle');
+      const [peer, setPeer] = useState(null);
+      const [connections, setConnections] = useState([]);
+      const [screenStream, setScreenStream] = useState(null);
+      const [remoteStream, setRemoteStream] = useState(null);
+
+      const videoRef = useRef(null);
+
+      // Start as presenter: create a Peer and wait for connections
+      const startPresenter = () => {
+        setStatus('Initializing presenter...');
+        const p = new Peer();
+        setPeer(p);
+
+        p.on('open', id => {
+          setPeerId(id);
+          setStatus('Presenter ready. Share your Peer ID with viewers.');
+        });
+
+        p.on('connection', conn => {
+          setConnections(prev => [...prev, conn]);
+        });
+
+        p.on('call', call => {
+          // When a viewer calls, answer with the screen stream
+          if (screenStream) {
+            call.answer(screenStream);
+            setStatus('Viewer connected!');
+          } else {
+            setStatus('No screen stream! Please start sharing your screen.');
+          }
+        });
+      };
+
+      // Start screen sharing (presenter only)
+      const startScreenShare = async () => {
+        try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+          setScreenStream(stream);
+          setStatus('Screen sharing started. Waiting for viewers...');
+        } catch (err) {
+          setStatus('Screen share error: ' + err.message);
+        }
+      };
+
+      // Start as viewer: connect to presenter's Peer ID and receive screen stream
+      const startViewer = () => {
+        if (!presenterId) {
+          setStatus('Enter presenter Peer ID');
+          return;
+        }
+        setStatus('Connecting to presenter...');
+        const p = new Peer();
+        setPeer(p);
+
+        p.on('open', id => {
+          setPeerId(id);
+          // Call the presenter to get their screen stream
+          const call = p.call(presenterId, null);
+          call.on('stream', stream => {
+            setRemoteStream(stream);
+            setStatus('Watching presenter\'s screen');
+            if (videoRef.current) {
+              videoRef.current.srcObject = stream;
+            }
+          });
+          call.on('error', err => {
+            setStatus('Call error: ' + err.message);
+          });
+        });
+      };
+
+      // Attach remote stream to video element when it changes
+      React.useEffect(() => {
+        if (remoteStream && videoRef.current) {
+          videoRef.current.srcObject = remoteStream;
+        }
+      }, [remoteStream]);
+
+      return (
+        <div className="w-full max-w-lg bg-white rounded-lg shadow-md p-6">
+          <h1 className="text-2xl font-bold mb-4 text-center text-purple-700">One-to-Many Screen Share</h1>
+          <div className="mb-4">
+            <p className="text-sm"><span className="font-semibold">Status:</span> {status}</p>
+          </div>
+
+          {!role && (
+            <div className="flex gap-4 mb-4">
+              <button
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-semibold"
+                onClick={() => { setRole('presenter'); startPresenter(); }}
+              >
+                Start as Presenter
+              </button>
+              <button
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-semibold"
+                onClick={() => setRole('viewer')}
+              >
+                Join as Viewer
+              </button>
+            </div>
+          )}
+
+          {role === 'presenter' && (
+            <>
+              <div className="mb-4">
+                <p className="text-sm"><span className="font-semibold">Your Peer ID:</span> <span className="text-blue-600">{peerId || '...'}</span></p>
+                <p className="text-xs text-gray-500">Share this ID with your viewers.</p>
+              </div>
+              <button
+                className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded font-semibold mb-4"
+                onClick={startScreenShare}
+                disabled={!!screenStream}
+              >
+                {screenStream ? 'Screen Sharing...' : 'Start Screen Sharing'}
+              </button>
+              {screenStream && (
+                <div className="mb-2">
+                  <video
+                    className="w-full rounded border"
+                    autoPlay
+                    muted
+                    ref={videoRef}
+                    srcObject={screenStream}
+                    style={{ maxHeight: 300 }}
+                  />
+                  <p className="text-xs text-gray-500 mt-2">You are sharing your screen.</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {role === 'viewer' && (
+            <div>
+              <div className="mb-4">
+                <input
+                  className="border p-2 rounded w-full"
+                  placeholder="Enter presenter Peer ID"
+                  value={presenterId}
+                  onChange={e => setPresenterId(e.target.value)}
+                  disabled={!!peerId}
+                />
+              </div>
+              <button
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-semibold mb-4 w-full"
+                onClick={startViewer}
+                disabled={!!peerId}
+              >
+                {peerId ? 'Connected' : 'Join as Viewer'}
+              </button>
+              {remoteStream && (
+                <div>
+                  <video
+                    className="w-full rounded border"
+                    autoPlay
+                    controls
+                    ref={videoRef}
+                    style={{ maxHeight: 300 }}
+                  />
+                  <p className="text-xs text-gray-500 mt-2">Watching presenter's screen.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="mt-6 text-xs text-gray-400">
+            <p>Presenter: Click "Start as Presenter", then "Start Screen Sharing".</p>
+            <p>Viewers: Click "Join as Viewer", enter the presenter's Peer ID, and join.</p>
+            <p>All PeerJS signaling is serverless and free for demo use.</p>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
