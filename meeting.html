@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SyncLite Meeting Screen Share V6</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SyncLite Screen Share V7</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -21,58 +21,41 @@
       const [isHost, setIsHost] = useState(false);
       const [peerId, setPeerId] = useState('');
       const [remoteId, setRemoteId] = useState('');
-      const [connStatus, setConnStatus] = useState('Not connected');
+      const [status, setStatus] = useState('Initializing...');
       const [peer, setPeer] = useState(null);
-      const [call, setCall] = useState(null);
       const [stream, setStream] = useState(null);
       const [remoteStream, setRemoteStream] = useState(null);
-      const [isSharing, setIsSharing] = useState(false);
-
       const videoRef = useRef(null);
 
-      // Initialize PeerJS
       useEffect(() => {
-        const newPeer = new Peer(undefined, { debug: 2 });
-
-        newPeer.on('open', id => {
+        const p = new Peer();
+        p.on('open', id => {
           setPeerId(id);
-          setConnStatus('Ready');
+          setStatus('Ready');
         });
 
-        newPeer.on('call', incomingCall => {
+        // Host handles incoming calls
+        p.on('call', call => {
           if (isHost && stream) {
-            // Host answers viewer with screen stream
-            incomingCall.answer(stream);
-            incomingCall.on('close', () => {
-              console.log('Viewer disconnected');
+            call.answer(stream);
+            setStatus('Viewer connected');
+          } else {
+            setStatus('Viewer received a call');
+            call.on('stream', remote => {
+              setRemoteStream(remote);
+              setStatus('Receiving screen...');
             });
           }
         });
 
-        setPeer(newPeer);
+        setPeer(p);
+
         return () => {
-          newPeer.destroy();
-          cleanup();
+          if (stream) stream.getTracks().forEach(t => t.stop());
+          p.destroy();
         };
       }, [isHost, stream]);
 
-      // Viewer: call host after entering ID
-      useEffect(() => {
-        if (peer && !isHost && remoteId) {
-          const viewerCall = peer.call(remoteId, null); // no stream
-          viewerCall.on('stream', remote => {
-            setRemoteStream(remote);
-            setConnStatus('Watching screen...');
-          });
-          viewerCall.on('close', () => {
-            setConnStatus('Disconnected');
-            cleanup();
-          });
-          setCall(viewerCall);
-        }
-      }, [peer, isHost, remoteId]);
-
-      // Play stream in video element
       useEffect(() => {
         if (remoteStream && videoRef.current) {
           videoRef.current.srcObject = remoteStream;
@@ -81,92 +64,76 @@
 
       const startScreenShare = async () => {
         try {
-          const localStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-          setStream(localStream);
-          setIsSharing(true);
-          setConnStatus('Sharing screen...');
+          const media = await navigator.mediaDevices.getDisplayMedia({ video: true });
+          setStream(media);
+          setStatus('Sharing screen...');
 
-          // Stop screen share when user manually ends it
-          localStream.getVideoTracks()[0].addEventListener('ended', () => {
-            cleanup();
-            setConnStatus('Screen share stopped');
+          media.getTracks()[0].addEventListener('ended', () => {
+            setStream(null);
+            setStatus('Screen sharing ended');
           });
-        } catch (err) {
-          setConnStatus('Error: ' + err.message);
+        } catch (e) {
+          setStatus('Error: ' + e.message);
         }
       };
 
-      const cleanup = () => {
-        if (call) call.close();
-        if (stream) stream.getTracks().forEach(t => t.stop());
-        setCall(null);
-        setStream(null);
-        setRemoteStream(null);
-        setIsSharing(false);
+      const connectToHost = () => {
+        if (!peer || !remoteId) return;
+        const conn = peer.connect(remoteId);
+        setStatus('Waiting for host to call...');
       };
 
       return (
-        <div className="w-full max-w-md bg-white rounded-lg shadow-md p-6">
-          <h1 className="text-2xl font-bold mb-4 text-center text-purple-700">SyncLite Meeting Screen Share V6</h1>
+        <div className="max-w-md w-full bg-white shadow-lg rounded p-6">
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite Meeting Screen V7</h1>
 
           <div className="flex items-center space-x-2 mb-4">
             <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
             <label htmlFor="hostToggle" className="text-sm">I am the Host</label>
           </div>
 
-          <div className="bg-gray-100 rounded p-3 mb-4">
-            <p className="text-sm mb-1"><span className="font-semibold">Your Peer ID:</span> <span className="text-blue-600">{peerId || '...'}</span></p>
-            <p className="text-sm"><span className="font-semibold">Status:</span> {connStatus}</p>
+          <div className="bg-gray-100 p-3 rounded mb-4 text-sm">
+            <p><strong>Peer ID:</strong> {peerId || 'Loading...'}</p>
+            <p><strong>Status:</strong> {status}</p>
           </div>
 
           {!isHost && (
-            <div className="mb-4">
+            <div className="mb-4 space-y-2">
               <input
-                className="border p-2 rounded w-full"
-                placeholder="Enter Host Peer ID"
+                className="border p-2 w-full rounded"
+                placeholder="Enter Host ID"
                 value={remoteId}
                 onChange={e => setRemoteId(e.target.value)}
               />
+              <button
+                onClick={connectToHost}
+                className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold"
+              >
+                Connect to Host
+              </button>
             </div>
           )}
 
-          {isHost && !isSharing && (
+          {isHost && !stream && (
             <button
               onClick={startScreenShare}
-              className="bg-purple-600 hover:bg-purple-700 text-white p-3 rounded w-full font-semibold"
+              className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold"
             >
               Share Screen
             </button>
           )}
 
-          {(isSharing || remoteStream) && (
+          {(stream || remoteStream) && (
             <div className="mt-4">
               <video
                 ref={videoRef}
                 autoPlay
                 controls
                 className="w-full rounded shadow"
-                style={{ maxHeight: 600, minHeight: 400 }}
+                style={{ minHeight: 300 }}
               />
             </div>
           )}
-
-          {(isSharing || remoteStream) && (
-            <button
-              onClick={cleanup}
-              className="mt-4 bg-red-500 hover:bg-red-600 text-white p-3 rounded w-full font-semibold"
-            >
-              Stop Sharing / Disconnect
-            </button>
-          )}
-
-          <div className="mt-4 text-xs text-gray-500">
-            <p>
-              {isHost
-                ? 'Share your Peer ID with viewers to let them watch your screen.'
-                : 'Enter the Host\'s Peer ID to view their screen.'}
-            </p>
-          </div>
         </div>
       );
     }
