@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SyncLite Audio Chat</title>
+  <title>SyncLite Audio V5 Chat</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -21,6 +21,7 @@
       const [status, setStatus] = useState('Disconnected');
       const [stream, setStream] = useState(null);
       const [peerConnection, setPeerConnection] = useState(null);
+      const [pusherConnected, setPusherConnected] = useState(false);
       const pusher = useRef(null);
       const channel = useRef(null);
       const audioRef = useRef(null);
@@ -28,48 +29,79 @@
 
       // Initialize Pusher and WebRTC
       useEffect(() => {
-        // Connect to Pusher (replace with your app key)
-        pusher.current = new Pusher('2d4b87dc9356587cb571', {
-          cluster: 'ap2',
-          forceTLS: true,
-        });
+        try {
+          // Connect to Pusher with your app key and cluster
+          pusher.current = new Pusher('2d4b87dc9356587cb571', {
+            cluster: 'ap2',
+            forceTLS: true,
+          });
 
-        channel.current = pusher.current.subscribe('synclite-channel');
+          pusher.current.connection.bind('error', (err) => {
+            console.error('Pusher connection error:', err);
+            setStatus('Error: Failed to connect to Pusher');
+            alert('Failed to connect to Pusher. Check console for details and verify App Key/Cluster.');
+          });
 
-        // Update user count
-        channel.current.bind('pusher:subscription_count', (data) => {
-          setUserCount(data.subscription_count);
-          if (data.subscription_count >= 2) {
-            initWebRTC(false); // Auto-start audio chat with 2 users
-          }
-        });
+          pusher.current.connection.bind('connected', () => {
+            setStatus('Connected to Pusher');
+            setPusherConnected(true);
+          });
 
-        // Handle WebRTC signaling
-        channel.current.bind('client-offer', async (data) => {
-          if (!peerConnection) await initWebRTC(false);
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          channel.current.trigger('client-answer', { answer });
-        });
+          channel.current = pusher.current.subscribe('synclite-channel');
 
-        channel.current.bind('client-answer', async (data) => {
-          if (peerConnection) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-          }
-        });
+          // Update user count
+          channel.current.bind('pusher:subscription_count', (data) => {
+            setUserCount(data.subscription_count);
+            if (data.subscription_count >= 2) {
+              initWebRTC(false); // Auto-start audio chat with 2 users
+            }
+          });
 
-        channel.current.bind('client-ice-candidate', async (data) => {
-          if (peerConnection) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-          }
-        });
+          // Handle WebRTC signaling
+          channel.current.bind('client-offer', async (data) => {
+            if (!peerConnection) await initWebRTC(false);
+            try {
+              await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+              const answer = await peerConnection.createAnswer();
+              await peerConnection.setLocalDescription(answer);
+              channel.current.trigger('client-answer', { answer });
+            } catch (e) {
+              setStatus(`Error setting offer: ${e.message}`);
+              alert(`Error setting offer: ${e.message}`);
+            }
+          });
 
-        return () => {
-          pusher.current.disconnect();
-          if (peerConnection) peerConnection.close();
-          if (stream) stream.getTracks().forEach((track) => track.stop());
-        };
+          channel.current.bind('client-answer', async (data) => {
+            if (peerConnection) {
+              try {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+              } catch (e) {
+                setStatus(`Error setting answer: ${e.message}`);
+                alert(`Error setting answer: ${e.message}`);
+              }
+            }
+          });
+
+          channel.current.bind('client-ice-candidate', async (data) => {
+            if (peerConnection) {
+              try {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+              } catch (e) {
+                setStatus(`Error adding ICE candidate: ${e.message}`);
+                alert(`Error adding ICE candidate: ${e.message}`);
+              }
+            }
+          });
+
+          return () => {
+            pusher.current.disconnect();
+            if (peerConnection) peerConnection.close();
+            if (stream) stream.getTracks().forEach((track) => track.stop());
+          };
+        } catch (e) {
+          setStatus(`Error initializing Pusher: ${e.message}`);
+          alert(`Error initializing Pusher: ${e.message}`);
+        }
       }, []);
 
       // Initialize WebRTC
@@ -145,8 +177,8 @@
 
       // Start audio chat
       const startAudioChat = async () => {
-        if (userCount < 2) {
-          alert('Need at least 2 users to start chat');
+        if (!pusherConnected) {
+          alert('Pusher not connected. Check Pusher setup.');
           return;
         }
         await initWebRTC(false);
@@ -154,8 +186,8 @@
 
       // Start screen sharing
       const startScreenShare = async () => {
-        if (userCount < 2) {
-          alert('Need at least 2 users to start screen sharing');
+        if (!pusherConnected) {
+          alert('Pusher not connected. Check Pusher setup.');
           return;
         }
         await initWebRTC(true);
@@ -163,20 +195,20 @@
 
       return (
         <div className="w-full max-w-md">
-          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Audio V5 Chat</h1>
+          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Audio V6 Chat</h1>
           <p className="text-sm mb-2 text-center">Users on page: {userCount}</p>
           <p className="text-sm mb-2 text-center">Status: {status}</p>
           <button
             onClick={startAudioChat}
-            className="bg-green-500 text-white p-2 rounded w-full mb-2"
-            disabled={userCount < 2}
+            className="bg-green-500 text-white p-2 rounded w-full mb-2 disabled:opacity-50"
+            disabled={!pusherConnected}
           >
             Start Audio Chat
           </button>
           <button
             onClick={startScreenShare}
-            className="bg-purple-500 text-white p-2 rounded w-full mb-2"
-            disabled={userCount < 2}
+            className="bg-purple-500 text-white p-2 rounded w-full mb-2 disabled:opacity-50"
+            disabled={!pusherConnected}
           >
             Share Screen
           </button>
