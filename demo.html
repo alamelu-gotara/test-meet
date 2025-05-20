@@ -15,6 +15,16 @@
   <script type="text/babel">
     const { useState, useRef } = React;
 
+    // Shared PeerJS config for both presenter and viewer
+    const peerConfig = {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'turn:homeo@turn.bistri.com:80', credential: 'homeo' }
+        ]
+      }
+    };
+
     function App() {
       const [role, setRole] = useState(null); // 'presenter' or 'viewer'
       const [peerId, setPeerId] = useState('');
@@ -30,7 +40,8 @@
       // Start as presenter: create a Peer and wait for connections
       const startPresenter = () => {
         setStatus('Initializing presenter...');
-        const p = new Peer();
+
+        const p = new Peer(undefined, peerConfig);
         setPeer(p);
 
         p.on('open', id => {
@@ -71,7 +82,7 @@
           return;
         }
         setStatus('Connecting to presenter...');
-        const p = new Peer();
+        const p = new Peer(undefined, peerConfig);
         setPeer(p);
 
         p.on('open', id => {
