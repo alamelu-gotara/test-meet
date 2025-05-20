@@ -9,7 +9,7 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
 </head>
 <body>
   <div id="root" class="min-h-screen bg-gray-100 flex flex-col items-center p-4"></div>
@@ -21,52 +21,52 @@
       const [status, setStatus] = useState('Disconnected');
       const [stream, setStream] = useState(null);
       const [peerConnection, setPeerConnection] = useState(null);
-      const socket = useRef(null);
+      const pusher = useRef(null);
+      const channel = useRef(null);
       const audioRef = useRef(null);
       const videoRef = useRef(null);
 
-      // Initialize WebSocket and WebRTC
+      // Initialize Pusher and WebRTC
       useEffect(() => {
-        // Connect to WebSocket server (replace with your server URL)
-        socket.current = io('wss://your-signaling-server-url', { transports: ['websocket'] });
-
-        socket.current.on('connect', () => {
-          setStatus('Connected to server');
+        // Connect to Pusher (replace with your app key)
+        pusher.current = new Pusher('2d4b87dc9356587cb571', {
+          cluster: 'ap2',
+          forceTLS: true,
         });
+
+        channel.current = pusher.current.subscribe('synclite-channel');
 
         // Update user count
-        socket.current.on('userCount', (count) => {
-          setUserCount(count);
-        });
-
-        // Initialize WebRTC when two users are present
-        socket.current.on('startWebRTC', () => {
-          initWebRTC(false); // Start with audio
-        });
-
-        // Handle WebRTC signaling
-        socket.current.on('offer', async (offer) => {
-          if (!peerConnection) await initWebRTC(false);
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          socket.current.emit('answer', answer);
-        });
-
-        socket.current.on('answer', async (answer) => {
-          if (peerConnection) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        channel.current.bind('pusher:subscription_count', (data) => {
+          setUserCount(data.subscription_count);
+          if (data.subscription_count >= 2) {
+            initWebRTC(false); // Auto-start audio chat with 2 users
           }
         });
 
-        socket.current.on('ice-candidate', async (candidate) => {
+        // Handle WebRTC signaling
+        channel.current.bind('client-offer', async (data) => {
+          if (!peerConnection) await initWebRTC(false);
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          channel.current.trigger('client-answer', { answer });
+        });
+
+        channel.current.bind('client-answer', async (data) => {
           if (peerConnection) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+          }
+        });
+
+        channel.current.bind('client-ice-candidate', async (data) => {
+          if (peerConnection) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
           }
         });
 
         return () => {
-          socket.current.disconnect();
+          pusher.current.disconnect();
           if (peerConnection) peerConnection.close();
           if (stream) stream.getTracks().forEach((track) => track.stop());
         };
@@ -79,8 +79,16 @@
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
               { urls: 'stun:stun1.l.google.com:19302' },
-              { urls: 'stun:stun2.l.google.com:19302' },
-              { urls: 'stun:stun3.l.google.com:19302' },
+              {
+                urls: 'turn:openrelay.metered.ca:80',
+                username: 'openrelayproject',
+                credential: 'openrelayproject',
+              },
+              {
+                urls: 'turn:openrelay.metered.ca:443',
+                username: 'openrelayproject',
+                credential: 'openrelayproject',
+              },
             ],
           });
           setPeerConnection(pc);
@@ -106,16 +114,14 @@
           // Send ICE candidates
           pc.onicecandidate = (event) => {
             if (event.candidate) {
-              socket.current.emit('ice-candidate', event.candidate);
+              channel.current.trigger('client-ice-candidate', { candidate: event.candidate });
             }
           };
 
           // Create offer for initiator
-          if (!isScreenShare) {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.current.emit('offer', offer);
-          }
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          channel.current.trigger('client-offer', { offer });
 
           // Monitor ICE state
           pc.oniceconnectionstatechange = () => {
@@ -157,7 +163,7 @@
 
       return (
         <div className="w-full max-w-md">
-          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Audio V4 Chat</h1>
+          <h1 className="text-2xl font-bold mb-4 text-center">SyncLite Audio V5 Chat</h1>
           <p className="text-sm mb-2 text-center">Users on page: {userCount}</p>
           <p className="text-sm mb-2 text-center">Status: {status}</p>
           <button
