@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SyncLite Audio V6 Chat</title>
+  <title>SyncLite Audio V9 Chat</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -20,6 +20,7 @@
       // Configuration - REPLACE WITH YOUR ACTUAL PUSHER CREDENTIALS
       const PUSHER_APP_KEY = '2d4b87dc9356587cb571'; // Replace with your actual Pusher app key
       const PUSHER_CLUSTER = 'ap2';
+      const CHANNEL_NAME = 'private-synclite-channel'; // Using private channel for client events
       
       const [userCount, setUserCount] = useState(0);
       const [status, setStatus] = useState('Initializing...');
@@ -27,6 +28,7 @@
       const [peerConnection, setPeerConnection] = useState(null);
       const [pusherConnected, setPusherConnected] = useState(false);
       const [isInitiating, setIsInitiating] = useState(false);
+      const [authEndpoint, setAuthEndpoint] = useState(null);
       const pusher = useRef(null);
       const channel = useRef(null);
       const audioRef = useRef(null);
@@ -50,12 +52,20 @@
           
           console.log('Connecting to Pusher...');
           
-          // Connect to Pusher with your app key and cluster
-          pusher.current = new Pusher(PUSHER_APP_KEY, {
+          // Check if we need authentication endpoint for private channels
+          const pusherOptions = {
             cluster: PUSHER_CLUSTER,
             forceTLS: false, // Match your dashboard setting
             enabledTransports: ['ws', 'wss'], // Allow both secure and non-secure connections
-          });
+          };
+          
+          // If using private channels without auth, provide an auth endpoint warning
+          if (CHANNEL_NAME.startsWith('private-') && !authEndpoint) {
+            console.warn('Using private channel without auth endpoint - this requires Pusher setting "Enable authorized connections" to be DISABLED');
+          }
+          
+          // Connect to Pusher with your app key and cluster
+          pusher.current = new Pusher(PUSHER_APP_KEY, pusherOptions);
 
           pusher.current.connection.bind('error', (err) => {
             console.error('Pusher connection error:', err);
@@ -82,10 +92,12 @@
       
       const subscribeToChannel = () => {
         try {
-          console.log('Subscribing to channel synclite-channel...');
+          console.log('Subscribing to private channel...');
           
-          // Use a public channel since we don't have authentication set up
-          channel.current = pusher.current.subscribe('synclite-channel');
+          // Use a private channel for client events
+          console.log(`Channel name: ${CHANNEL_NAME}`);
+          
+          channel.current = pusher.current.subscribe(CHANNEL_NAME);
           
           channel.current.bind('pusher:subscription_succeeded', () => {
             console.log('Successfully subscribed to channel');
@@ -361,11 +373,12 @@
 
       return (
         <div className="w-full max-w-md bg-white rounded-lg shadow-md p-6">
-          <h1 className="text-2xl font-bold mb-4 text-center text-purple-700">SyncLite Audio V8 Chat</h1>
+          <h1 className="text-2xl font-bold mb-4 text-center text-purple-700">SyncLite Audio V6 Chat</h1>
           
           <div className="bg-gray-100 rounded p-3 mb-4">
             <p className="text-sm mb-1"><span className="font-semibold">Users online:</span> {userCount}</p>
             <p className="text-sm mb-1"><span className="font-semibold">Status:</span> {status}</p>
+            <p className="text-sm mb-1"><span className="font-semibold">Channel:</span> {CHANNEL_NAME}</p>
           </div>
           
           <div className="space-y-2 mb-4">
