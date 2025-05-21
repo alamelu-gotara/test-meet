@@ -77,7 +77,7 @@
       }, [isHost, stream]);
 
       useEffect(() => {
-        if (remoteStream && videoRef.current) {
+        if (remoteStream && videoRef.current && !isHost) {
           videoRef.current.srcObject = remoteStream;
         }
         if (stream && isHost && videoRef.current) {
