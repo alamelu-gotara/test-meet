@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Many-to-Many Screen Share V25</title>
+  <title>SyncLite Screen Share V26 - Many to Many</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -18,228 +18,340 @@
     const { useState, useEffect, useRef } = React;
 
     function App() {
-      const [peerId, setPeerId] = useState('');
-      const [peer, setPeer] = useState(null);
-      const [allPeers, setAllPeers] = useState([]); // List of all peer IDs (including self)
-      const [knownPeers, setKnownPeers] = useState(''); // Comma-separated peer IDs to connect to
-      const [connections, setConnections] = useState({}); // { peerId: DataConnection }
-      const [calls, setCalls] = useState({}); // { peerId: MediaConnection }
-      const [localStream, setLocalStream] = useState(null);
-      const [remoteStreams, setRemoteStreams] = useState({}); // { peerId: MediaStream }
-      const [isAudioMuted, setIsAudioMuted] = useState(false);
+      const [roomId, setRoomId] = useState('');
+      const [myPeerId, setMyPeerId] = useState('');
+      const [displayName, setDisplayName] = useState('');
+      const [status, setStatus] = useState('Initializing...');
+      const [isInRoom, setIsInRoom] = useState(false);
       const [isScreenSharing, setIsScreenSharing] = useState(false);
-      const localVideoRef = useRef(null);
+      const [isAudioMuted, setIsAudioMuted] = useState(false);
+      const [participants, setParticipants] = useState([]);
+      const [debugging, setDebugging] = useState('');
+      
+      const peer = useRef(null);
+      const myStream = useRef(null);
+      const connections = useRef({});
+      const calls = useRef({});
+      const streams = useRef({});
+      const myMicTrack = useRef(null);
+      const myScreenStream = useRef(null);
 
-      // 1. Initialize PeerJS
+      // Initialize PeerJS
       useEffect(() => {
-        const p = new Peer();
-        setPeer(p);
+        const p = new Peer({
+          debug: 3, // For debugging - higher level logs
+          config: {
+            iceServers: [
+              { urls: "stun:stun.relay.metered.ca:80" },
+              {
+                urls: "turn:global.relay.metered.ca:80",
+                username: "openrelayproject",
+                credential: "openrelayproject",
+              },
+              {
+                urls: "turn:global.relay.metered.ca:443",
+                username: "openrelayproject",
+                credential: "openrelayproject",
+              },
+            ]
+          }
+        });
+        
+        // Handle connection events
         p.on('open', id => {
-          setPeerId(id);
+          setMyPeerId(id);
+          setStatus('Ready to join or create a room');
         });
 
-        // 2. Handle incoming data connections (peer list exchange)
+        p.on('error', err => {
+          setStatus(`PeerJS error: ${err.type} - ${err.message}`);
+          addDebugMsg(`PeerJS error: ${err.type} - ${err.message}`);
+        });
+
+        // Handle incoming connections
         p.on('connection', conn => {
-          conn.on('data', data => {
-            if (data.type === 'peer-list') {
-              const newPeers = data.peers.filter(pid => pid !== peerId);
-              setAllPeers(prev => Array.from(new Set([...prev, ...newPeers, peerId])));
-            }
-          });
+          handleNewConnection(conn);
         });
 
-        // 3. Handle incoming media calls
+        // Handle incoming calls
         p.on('call', call => {
-          call.answer(localStream);
-          call.on('stream', remoteStream => {
-            setRemoteStreams(prev => ({ ...prev, [call.peer]: remoteStream }));
-          });
-          setCalls(prev => ({ ...prev, [call.peer]: call }));
+          handleIncomingCall(call);
         });
+
+        peer.current = p;
 
         return () => {
+          // Clean up
+          if (myStream.current) {
+            myStream.current.getTracks().forEach(track => track.stop());
+          }
+          
+          if (myScreenStream.current) {
+            myScreenStream.current.getTracks().forEach(track => track.stop());
+          }
+          
+          // Close all connections
+          Object.values(connections.current).forEach(conn => conn.close());
+          
+          // Close all calls
+          Object.values(calls.current).forEach(call => call.close());
+          
           p.destroy();
-          if (localStream) localStream.getTracks().forEach(t => t.stop());
         };
       }, []);
 
-      // 4. Get local media (mic, optionally screen)
-      const getLocalMedia = async (withScreen = false) => {
-        try {
-          let stream;
-          if (withScreen) {
-            const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-            const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            stream = new MediaStream([
-              ...screenStream.getVideoTracks(),
-              ...micStream.getAudioTracks()
-            ]);
-            screenStream.getVideoTracks()[0].addEventListener('ended', () => setIsScreenSharing(false));
-            setIsScreenSharing(true);
-          } else {
-            stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-            setIsScreenSharing(false);
-          }
-          setLocalStream(stream);
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-          }
-        } catch (e) {
-          alert('Could not get local media: ' + e.message);
-        }
+      const addDebugMsg = (msg) => {
+        setDebugging(prev => `${msg}\n${prev}`.slice(0, 1000)); // Limit debug history
       };
 
-      // 5. Connect to known peers (comma-separated list)
-      const connectToPeers = () => {
-        if (!peer) return;
-        const peerIds = knownPeers.split(',').map(x => x.trim()).filter(x => x && x !== peerId);
-        setAllPeers(Array.from(new Set([...peerIds, peerId])));
-        peerIds.forEach(pid => {
-          if (!connections[pid]) {
-            const conn = peer.connect(pid);
-            conn.on('open', () => {
-              // Exchange peer lists for mesh topology
-              conn.send({ type: 'peer-list', peers: [...peerIds, peerId] });
-            });
-            conn.on('data', data => {
-              if (data.type === 'peer-list') {
-                const newPeers = data.peers.filter(pid => pid !== peerId);
-                setAllPeers(prev => Array.from(new Set([...prev, ...newPeers, peerId])));
+      const handleNewConnection = (conn) => {
+        const peerId = conn.peer;
+        
+        connections.current[peerId] = conn;
+        addDebugMsg(`New connection from: ${peerId}`);
+        
+        conn.on('open', () => {
+          // Send my info to the new participant
+          conn.send({
+            type: 'USER_INFO',
+            peerId: myPeerId,
+            displayName: displayName,
+            isScreenSharing: isScreenSharing
+          });
+          
+          // Send list of other participants to the new participant
+          conn.send({
+            type: 'PARTICIPANTS_LIST',
+            participants: participants.map(p => ({
+              peerId: p.peerId,
+              displayName: p.displayName,
+              isScreenSharing: p.isScreenSharing
+            }))
+          });
+          
+          // Add participant to list if not already present
+          addParticipant({
+            peerId: peerId,
+            displayName: "Unknown", // Will be updated when we get USER_INFO
+            isScreenSharing: false,
+            hasStream: false
+          });
+          
+          setStatus(`Connected to: ${peerId}`);
+          
+          // If I'm sharing my screen, initiate a call to the new participant
+          if (isScreenSharing && myStream.current) {
+            setTimeout(() => {
+              callPeer(peerId);
+            }, 1000);
+          }
+        });
+        
+        conn.on('data', data => {
+          handleDataMessage(data, peerId);
+        });
+        
+        conn.on('close', () => {
+          removeParticipant(peerId);
+          addDebugMsg(`Connection closed with: ${peerId}`);
+        });
+
+        conn.on('error', err => {
+          addDebugMsg(`Connection error with ${peerId}: ${err.message}`);
+        });
+      };
+
+      const handleIncomingCall = (call) => {
+        const peerId = call.peer;
+        addDebugMsg(`Incoming call from: ${peerId}`);
+        
+        // Answer the call with my audio stream if available, otherwise empty stream
+        let answerStream = new MediaStream();
+        if (myMicTrack.current) {
+          answerStream.addTrack(myMicTrack.current);
+        }
+        
+        call.answer(answerStream);
+        calls.current[peerId] = call;
+        
+        call.on('stream', remoteStream => {
+          addDebugMsg(`Received stream from: ${peerId} (tracks: ${remoteStream.getTracks().length})`);
+          streams.current[peerId] = remoteStream;
+          
+          // Update the participants list with the new stream
+          setParticipants(prevParticipants => 
+            prevParticipants.map(p => 
+              p.peerId === peerId ? { ...p, hasStream: true } : p
+            )
+          );
+        });
+        
+        call.on('close', () => {
+          addDebugMsg(`Call closed with: ${peerId}`);
+          // Handle call closed
+          if (streams.current[peerId]) {
+            delete streams.current[peerId];
+            
+            setParticipants(prevParticipants => 
+              prevParticipants.map(p => 
+                p.peerId === peerId ? { ...p, hasStream: false } : p
+              )
+            );
+          }
+        });
+
+        call.on('error', err => {
+          addDebugMsg(`Call error with ${peerId}: ${err.message}`);
+        });
+      };
+
+      const handleDataMessage = (data, fromPeerId) => {
+        if (!data || !data.type) return;
+        
+        switch (data.type) {
+          case 'USER_INFO':
+            addDebugMsg(`Received USER_INFO from: ${fromPeerId}, name: ${data.displayName}`);
+            // Add new participant to the list or update existing
+            setParticipants(prevParticipants => {
+              const exists = prevParticipants.some(p => p.peerId === data.peerId);
+              if (exists) {
+                return prevParticipants.map(p => 
+                  p.peerId === data.peerId ? { 
+                    ...p, 
+                    displayName: data.displayName,
+                    isScreenSharing: data.isScreenSharing 
+                  } : p
+                );
+              } else {
+                return [...prevParticipants, {
+                  peerId: data.peerId,
+                  displayName: data.displayName,
+                  isScreenSharing: data.isScreenSharing,
+                  hasStream: false
+                }];
               }
             });
-            setConnections(prev => ({ ...prev, [pid]: conn }));
+            break;
+            
+          case 'PARTICIPANTS_LIST':
+            addDebugMsg(`Received PARTICIPANTS_LIST from: ${fromPeerId}, count: ${data.participants?.length || 0}`);
+            // Add all participants from the list
+            if (data.participants && Array.isArray(data.participants)) {
+              data.participants.forEach(participant => {
+                if (participant.peerId !== myPeerId) {
+                  // Add to our participants list
+                  addParticipant(participant);
+                  
+                  // Connect to this participant if not already connected
+                  if (!connections.current[participant.peerId]) {
+                    connectToPeer(participant.peerId);
+                  }
+                }
+              });
+            }
+            break;
+            
+          case 'SCREEN_SHARING_STARTED':
+            addDebugMsg(`${fromPeerId} started screen sharing`);
+            // Update participant's screen sharing status
+            setParticipants(prevParticipants => 
+              prevParticipants.map(p => 
+                p.peerId === fromPeerId ? { ...p, isScreenSharing: true } : p
+              )
+            );
+            break;
+            
+          case 'SCREEN_SHARING_STOPPED':
+            addDebugMsg(`${fromPeerId} stopped screen sharing`);
+            // Update participant's screen sharing status
+            setParticipants(prevParticipants => 
+              prevParticipants.map(p => 
+                p.peerId === fromPeerId ? { ...p, isScreenSharing: false } : p
+              )
+            );
+            break;
+            
+          default:
+            addDebugMsg(`Unknown message type: ${data.type} from ${fromPeerId}`);
+            break;
+        }
+      };
+
+      const addParticipant = (participant) => {
+        // Add participant if they don't already exist
+        setParticipants(prevParticipants => {
+          const exists = prevParticipants.some(p => p.peerId === participant.peerId);
+          if (!exists) {
+            addDebugMsg(`Adding participant: ${participant.displayName || "Unknown"} (${participant.peerId})`);
+            return [...prevParticipants, {
+              peerId: participant.peerId,
+              displayName: participant.displayName || "Unknown",
+              isScreenSharing: participant.isScreenSharing || false,
+              hasStream: false
+            }];
           }
+          return prevParticipants;
         });
       };
 
-      // 6. Call all peers (send local stream)
-      useEffect(() => {
-        if (!peer || !localStream) return;
-        allPeers.forEach(pid => {
-          if (pid === peerId) return;
-          if (!calls[pid]) {
-            const call = peer.call(pid, localStream);
-            call.on('stream', remoteStream => {
-              setRemoteStreams(prev => ({ ...prev, [pid]: remoteStream }));
+      const removeParticipant = (peerId) => {
+        addDebugMsg(`Removing participant: ${peerId}`);
+        
+        // Remove participant from the list
+        setParticipants(prevParticipants => 
+          prevParticipants.filter(p => p.peerId !== peerId)
+        );
+        
+        // Clean up resources
+        if (connections.current[peerId]) {
+          connections.current[peerId].close();
+          delete connections.current[peerId];
+        }
+        
+        if (calls.current[peerId]) {
+          calls.current[peerId].close();
+          delete calls.current[peerId];
+        }
+        
+        if (streams.current[peerId]) {
+          delete streams.current[peerId];
+        }
+      };
+
+      const connectToPeer = (remotePeerId) => {
+        if (!peer.current || !remotePeerId || remotePeerId === myPeerId) return;
+        
+        if (connections.current[remotePeerId]) {
+          addDebugMsg(`Already connected to ${remotePeerId}, skipping connection`);
+          return;
+        }
+        
+        // Create a data connection
+        addDebugMsg(`Connecting to peer: ${remotePeerId}`);
+        try {
+          const conn = peer.current.connect(remotePeerId, {
+            reliable: true
+          });
+          
+          connections.current[remotePeerId] = conn;
+          
+          conn.on('open', () => {
+            addDebugMsg(`Connection open to: ${remotePeerId}`);
+            // Send my info to the remote peer
+            conn.send({
+              type: 'USER_INFO',
+              peerId: myPeerId,
+              displayName: displayName,
+              isScreenSharing: isScreenSharing
             });
-            setCalls(prev => ({ ...prev, [pid]: call }));
-          }
-        });
-      }, [allPeers, localStream, peerId, peer]);
-
-      // 7. Mute/unmute mic
-      const toggleMute = () => {
-        if (!localStream) return;
-        localStream.getAudioTracks().forEach(track => {
-          track.enabled = !isAudioMuted;
-        });
-        setIsAudioMuted(!isAudioMuted);
-      };
-
-      // 8. Start/stop screen sharing
-      const toggleScreenShare = async () => {
-        if (!isScreenSharing) {
-          await getLocalMedia(true);
-        } else {
-          await getLocalMedia(false);
-        }
-      };
-
-      // 9. Show local video when available
-      useEffect(() => {
-        if (localStream && localVideoRef.current) {
-          localVideoRef.current.srcObject = localStream;
-        }
-      }, [localStream]);
-
-      // 10. Show remote videos
-      const remoteVideos = Object.entries(remoteStreams).map(([pid, stream]) => (
-        <div key={pid} className="mb-2">
-          <div className="text-xs text-gray-500 mb-1">Peer: {pid}</div>
-          <video
-            autoPlay
-            playsInline
-            controls
-            className="w-full max-h-48 rounded shadow"
-            ref={el => { if (el) el.srcObject = stream; }}
-          />
-        </div>
-      ));
-
-      return (
-        <div className="max-w-lg w-full bg-white shadow-lg rounded p-6">
-          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V25 (Many-to-Many)</h1>
-
-          <div className="bg-gray-100 p-3 rounded mb-4 text-sm">
-            <div><strong>Your Peer ID:</strong> <span className="font-mono">{peerId}</span></div>
-            <div><strong>Known Peers:</strong> {allPeers.filter(pid => pid !== peerId).join(', ') || 'None'}</div>
-          </div>
-
-          <div className="mb-4">
-            <input
-              className="border p-2 w-full rounded"
-              placeholder="Comma-separated Peer IDs to connect"
-              value={knownPeers}
-              onChange={e => setKnownPeers(e.target.value)}
-            />
-            <button
-              onClick={connectToPeers}
-              className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold mt-2"
-            >
-              Connect to Peers
-            </button>
-          </div>
-
-          <div className="mb-4 flex space-x-2">
-            <button
-              onClick={() => getLocalMedia(false)}
-              className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded font-semibold flex-1"
-            >
-              Mic Only
-            </button>
-            <button
-              onClick={toggleScreenShare}
-              className={`${
-                isScreenSharing
-                  ? 'bg-red-600 hover:bg-red-700'
-                  : 'bg-green-600 hover:bg-green-700'
-              } text-white py-2 px-4 rounded font-semibold flex-1`}
-            >
-              {isScreenSharing ? 'Stop Screen Share' : 'Screen + Mic'}
-            </button>
-          </div>
-
-          {localStream && (
-            <div className="mb-4">
-              <div className="text-xs text-gray-500 mb-1">You</div>
-              <video
-                ref={localVideoRef}
-                autoPlay
-                muted
-                playsInline
-                controls
-                className="w-full max-h-48 rounded shadow"
-              />
-              <button
-                onClick={toggleMute}
-                className={`w-full mt-2 py-2 px-4 rounded font-semibold ${
-                  isAudioMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
-                } text-white`}
-              >
-                {isAudioMuted ? 'Unmute Mic' : 'Mute Mic'}
-              </button>
-            </div>
-          )}
-
-          {remoteVideos.length > 0 && (
-            <div>
-              <h2 className="text-lg font-bold mb-2">Remote Streams</h2>
-              {remoteVideos}
-            </div>
-          )}
-        </div>
-      );
-    }
+            
+            // If I'm screen sharing, call the remote peer after a short delay
+            if (isScreenSharing && myStream.current) {
+              setTimeout(() => {
+                callPeer(remotePeerId);
+              }, 1000);
+            }
+          });
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
