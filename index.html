@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Screen Share V10</title>
+  <title>SyncLite Screen Share V11</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -26,12 +26,10 @@
       const [stream, setStream] = useState(null);
       const [remoteStream, setRemoteStream] = useState(null);
       const videoRef = useRef(null);
-      const connRef = useRef(null);
+      const connRef = useRef(null); // keep reference to connection
 
       useEffect(() => {
         const p = new Peer();
-        setPeer(p);
-
         p.on('open', id => {
           setPeerId(id);
           setStatus('Ready');
@@ -39,26 +37,25 @@
 
         p.on('call', call => {
           if (!isHost) {
-            // Viewer answers and wants both video + audio
-            call.answer();
-
+            call.answer(); // Viewer answers call
             call.on('stream', remote => {
               setRemoteStream(remote);
-              setStatus('Receiving screen with audio...');
+              setStatus('Receiving screen...');
             });
           }
         });
 
         p.on('connection', conn => {
           connRef.current = conn;
-
           conn.on('open', () => {
             if (isHost && stream) {
-              const call = p.call(conn.peer, stream);
+              const call = p.call(conn.peer, stream); // Host calls viewer
               setStatus('Connected to viewer');
             }
           });
         });
+
+        setPeer(p);
 
         return () => {
           if (stream) stream.getTracks().forEach(t => t.stop());
@@ -67,32 +64,42 @@
       }, [isHost, stream]);
 
       useEffect(() => {
-        const video = videoRef.current;
-        if (video) {
-          video.srcObject = isHost ? stream : remoteStream;
+        if (remoteStream && videoRef.current) {
+          videoRef.current.srcObject = remoteStream;
         }
-      }, [stream, remoteStream, isHost]);
+        if (stream && isHost && videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      }, [remoteStream, stream]);
 
       const startScreenShare = async () => {
         try {
-          const media = await navigator.mediaDevices.getDisplayMedia({
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({
             video: true,
-            audio: true
+            audio: false // Do NOT capture system audio
           });
 
-          setStream(media);
-          setStatus('Screen sharing started');
-
-          media.getTracks().forEach(track => {
-            track.addEventListener('ended', () => {
-              setStream(null);
-              setStatus('Screen sharing ended');
-            });
+          const micStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false
           });
 
-          // Show Peer ID only after screen is shared
+          const combinedStream = new MediaStream([
+            ...screenStream.getVideoTracks(),
+            ...micStream.getAudioTracks()
+          ]);
+
+          setStream(combinedStream);
+          setStatus('Screen + mic sharing started');
+
+          screenStream.getVideoTracks()[0].addEventListener('ended', () => {
+            setStream(null);
+            setStatus('Screen sharing ended');
+          });
+
+          // Call connected viewer immediately if available
           if (peer && connRef.current) {
-            const call = peer.call(connRef.current.peer, media);
+            const call = peer.call(connRef.current.peer, combinedStream);
             setStatus('Streaming to connected viewer');
           }
 
@@ -110,50 +117,35 @@
 
       return (
         <div className="max-w-md w-full bg-white shadow-lg rounded p-6">
-          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V10</h1>
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V11</h1>
 
           <div className="flex items-center space-x-2 mb-4">
-            <input
-              type="checkbox"
-              id="hostToggle"
-              checked={isHost}
-              onChange={() => {
-                setIsHost(!isHost);
-                setRemoteStream(null);
-                setStream(null);
-              }}
-            />
+            <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
             <label htmlFor="hostToggle" className="text-sm">I am the Host</label>
           </div>
 
-          {isHost && stream && (
-            <div className="bg-gray-100 p-3 rounded mb-4 text-sm">
+          <div className="bg-gray-100 p-3 rounded mb-4 text-sm">
+            {isHost && stream && (
               <p><strong>Peer ID:</strong> {peerId}</p>
-              <p><strong>Status:</strong> {status}</p>
-            </div>
-          )}
+            )}
+            <p><strong>Status:</strong> {status}</p>
+          </div>
 
           {!isHost && (
-            <>
-              <div className="mb-4 space-y-2">
-                <input
-                  className="border p-2 w-full rounded"
-                  placeholder="Enter Host ID"
-                  value={remoteId}
-                  onChange={e => setRemoteId(e.target.value)}
-                />
-                <button
-                  onClick={connectToHost}
-                  className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold"
-                >
-                  Connect to Host
-                </button>
-              </div>
-
-              <div className="bg-gray-100 p-3 rounded mb-4 text-sm">
-                <p><strong>Status:</strong> {status}</p>
-              </div>
-            </>
+            <div className="mb-4 space-y-2">
+              <input
+                className="border p-2 w-full rounded"
+                placeholder="Enter Host ID"
+                value={remoteId}
+                onChange={e => setRemoteId(e.target.value)}
+              />
+              <button
+                onClick={connectToHost}
+                className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold"
+              >
+                Connect to Host
+              </button>
+            </div>
           )}
 
           {isHost && !stream && (
