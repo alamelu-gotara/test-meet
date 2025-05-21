@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Screen Share V13</title>
+  <title>SyncLite Screen Share V15</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -25,6 +25,7 @@
       const [peer, setPeer] = useState(null);
       const [stream, setStream] = useState(null);
       const [remoteStream, setRemoteStream] = useState(null);
+      const [micMuted, setMicMuted] = useState(false);
       const videoRef = useRef(null);
       const connRef = useRef(null);
       const callRef = useRef(null);
@@ -39,26 +40,25 @@
         // Handle incoming calls
         p.on('call', async call => {
           if (!isHost) {
-            // Viewer receives host's screen+mic
+            // Viewer answering call from host
             call.answer();
             call.on('stream', remote => {
               setRemoteStream(remote);
               setStatus('Receiving host screen & audio...');
             });
           } else {
-            // Host receives viewer's mic
-            call.answer(); // No stream sent from host in this call
+            // Host receives viewer mic stream
+            call.answer(); // no local stream
             call.on('stream', viewerMic => {
               const audio = new Audio();
               audio.srcObject = viewerMic;
-              audio.autoplay = true;
-              document.body.appendChild(audio); // Attach to DOM to ensure playback
+              audio.play();
               setStatus('Receiving viewer audio');
             });
           }
         });
 
-        // Handle data connection
+        // Handle data connections
         p.on('connection', conn => {
           connRef.current = conn;
           conn.on('open', () => {
@@ -80,9 +80,14 @@
 
       useEffect(() => {
         if (remoteStream && videoRef.current && !isHost) {
-          videoRef.current.srcObject = remoteStream;
+          const video = videoRef.current;
+          video.srcObject = remoteStream;
+          video.muted = true;
+          video.play().catch(() => {
+            console.warn("Autoplay failed on mobile. Tap to start video.");
+          });
         }
-      }, [remoteStream, stream]);
+      }, [remoteStream]);
 
       const startScreenShare = async () => {
         try {
@@ -113,7 +118,6 @@
             const call = peer.call(connRef.current.peer, combinedStream);
             callRef.current = call;
           }
-
         } catch (e) {
           setStatus('Error: ' + e.message);
         }
@@ -134,9 +138,18 @@
         });
       };
 
+      const toggleMic = () => {
+        if (!stream) return;
+        const audioTracks = stream.getAudioTracks();
+        audioTracks.forEach(track => {
+          track.enabled = !track.enabled;
+        });
+        setMicMuted(!micMuted);
+      };
+
       return (
         <div className="max-w-md w-full bg-white shadow-lg rounded p-6">
-          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V13</h1>
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V15</h1>
 
           <div className="flex items-center space-x-2 mb-4">
             <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
@@ -176,17 +189,37 @@
             </button>
           )}
 
-          {(stream || remoteStream) && (
+          {isHost && stream && (
+            <div className="mt-4 space-y-2 text-center">
+              <p className="text-gray-700 font-medium">Your screen is currently being shared.</p>
+              <button
+                onClick={toggleMic}
+                className={`${
+                  micMuted ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+                } text-white px-4 py-2 rounded font-semibold`}
+              >
+                {micMuted ? 'Unmute My Audio' : 'Mute My Audio'}
+              </button>
+            </div>
+          )}
+
+          {!isHost && remoteStream && (
             <div className="mt-4">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
-                muted={isHost}
+                muted
                 controls
                 className="w-full rounded shadow"
                 style={{ minHeight: 300 }}
               />
+              <button
+                onClick={() => videoRef.current?.play()}
+                className="mt-2 bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded w-full"
+              >
+                Tap to Play Video
+              </button>
             </div>
           )}
         </div>
