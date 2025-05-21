@@ -23,11 +23,9 @@
       const [remoteId, setRemoteId] = useState('');
       const [status, setStatus] = useState('Initializing...');
       const [peer, setPeer] = useState(null);
-      const [stream, setStream] = useState(null);
-      const [remoteStream, setRemoteStream] = useState(null);
+      const [stream, setStream] = useState(null); // host stream
+      const [remoteStream, setRemoteStream] = useState(null); // stream for video element
       const videoRef = useRef(null);
-      const connRef = useRef(null);
-      const callRef = useRef(null);
 
       useEffect(() => {
         const p = new Peer();
@@ -36,33 +34,31 @@
           setStatus('Ready');
         });
 
-        // Host receives viewer mic stream
         p.on('call', async call => {
-          if (!isHost) {
-            // Viewer answering call from host (host screen+mic)
-            call.answer();
-            call.on('stream', remote => {
-              setRemoteStream(remote);
-              setStatus('Receiving host screen & audio...');
-            });
-          } else {
-            // Host receiving viewer mic stream
-            call.answer(); // no local stream
-            call.on('stream', viewerMic => {
+          if (isHost) {
+            // Host receiving viewer mic audio
+            call.answer(); // no stream needed from host
+            call.on('stream', viewerAudioStream => {
+              // Play viewer's mic
               const audio = new Audio();
-              audio.srcObject = viewerMic;
+              audio.srcObject = viewerAudioStream;
               audio.play();
               setStatus('Receiving viewer audio');
+            });
+          } else {
+            // Viewer receiving host's screen+mic
+            call.answer(); // viewer answers call
+            call.on('stream', hostStream => {
+              setRemoteStream(hostStream);
+              setStatus('Receiving screen...');
             });
           }
         });
 
-        p.on('connection', conn => {
-          connRef.current = conn;
-          conn.on('open', () => {
+        p.on('connection', async conn => {
+          conn.on('open', async () => {
             if (isHost && stream) {
-              const call = p.call(conn.peer, stream);
-              callRef.current = call;
+              const call = p.call(conn.peer, stream); // send screen+mic to viewer
               setStatus('Connected to viewer');
             }
           });
@@ -77,44 +73,28 @@
       }, [isHost, stream]);
 
       useEffect(() => {
-        if (remoteStream && videoRef.current && !isHost) {
+        if (videoRef.current && remoteStream && !isHost) {
           videoRef.current.srcObject = remoteStream;
         }
-        if (stream && isHost && videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      }, [remoteStream, stream]);
+      }, [remoteStream]);
 
       const startScreenShare = async () => {
         try {
-          const screenStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-            audio: false
-          });
-
-          const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: false
-          });
-
-          const combinedStream = new MediaStream([
-            ...screenStream.getVideoTracks(),
-            ...micStream.getAudioTracks()
+          const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          
+          const combined = new MediaStream([
+            ...displayStream.getVideoTracks(),
+            ...audioStream.getAudioTracks()
           ]);
 
-          setStream(combinedStream);
-          setStatus('Screen + mic sharing started');
+          setStream(combined);
+          setStatus('Screen sharing started');
 
-          screenStream.getVideoTracks()[0].addEventListener('ended', () => {
+          displayStream.getVideoTracks()[0].addEventListener('ended', () => {
             setStream(null);
             setStatus('Screen sharing ended');
           });
-
-          if (peer && connRef.current) {
-            const call = peer.call(connRef.current.peer, combinedStream);
-            callRef.current = call;
-          }
-
         } catch (e) {
           setStatus('Error: ' + e.message);
         }
@@ -122,17 +102,17 @@
 
       const connectToHost = async () => {
         if (!peer || !remoteId) return;
+
         const conn = peer.connect(remoteId);
-        connRef.current = conn;
-        setStatus('Connecting to host...');
 
-        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-        conn.on('open', () => {
-          const call = peer.call(remoteId, micStream);
-          callRef.current = call;
-          setStatus('Connected to host');
-        });
+        // Send mic to host
+        try {
+          const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+          peer.call(remoteId, mic);
+          setStatus('Sent mic to host');
+        } catch (e) {
+          setStatus('Mic permission error: ' + e.message);
+        }
       };
 
       return (
@@ -144,12 +124,12 @@
             <label htmlFor="hostToggle" className="text-sm">I am the Host</label>
           </div>
 
-          <div className="bg-gray-100 p-3 rounded mb-4 text-sm">
-            {isHost && stream && (
+          {isHost && stream && (
+            <div className="bg-yellow-100 p-3 rounded mb-4 text-sm">
               <p><strong>Peer ID:</strong> {peerId}</p>
-            )}
-            <p><strong>Status:</strong> {status}</p>
-          </div>
+              <p><strong>Status:</strong> {status}</p>
+            </div>
+          )}
 
           {!isHost && (
             <div className="mb-4 space-y-2">
@@ -173,17 +153,17 @@
               onClick={startScreenShare}
               className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold"
             >
-              Share Screen
+              Share Screen + Mic
             </button>
           )}
 
-          {(stream || remoteStream) && (
+          {remoteStream && !isHost && (
             <div className="mt-4">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
-                muted={isHost}
+                muted
                 controls
                 className="w-full rounded shadow"
                 style={{ minHeight: 300 }}
