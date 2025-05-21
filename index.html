@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Many-to-Many Screen Share - V37</title>
+  <title>SyncLite Many-to-Many Mesh Audio - V38</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -13,7 +13,6 @@
 </head>
 <body>
   <div id="root" class="min-h-screen bg-gray-900 flex flex-col items-center p-4"></div>
-
   <script type="text/babel">
     const { useState, useRef, useEffect } = React;
 
@@ -27,12 +26,14 @@
       const [remoteStream, setRemoteStream] = useState(null); // Viewer: host's stream
       const [isAudioMuted, setIsAudioMuted] = useState(false);
       const [participantMicMuted, setParticipantMicMuted] = useState(false);
+      const [participantList, setParticipantList] = useState([]); // For host: all connected peers
 
       // Refs
       const peerRef = useRef(null);
       const connectionsRef = useRef([]); // All DataConnections
       const callsRef = useRef([]); // All MediaConnections
-      const audioElementsRef = useRef([]); // Host: array of audio elements for each viewer
+      const meshCallsRef = useRef([]); // For mesh audio
+      const audioElementsRef = useRef([]); // For mesh audio
       const videoRef = useRef(null); // Viewer: for host's video
       const localMicTrack = useRef(null);
       const participantMicTrack = useRef(null);
@@ -47,25 +48,38 @@
           setStatus('Ready');
         });
 
-        // Handle incoming calls (host: from viewers, viewer: from host)
+        // Handle incoming calls (host: from viewers, viewer: from host or other peers)
         peer.on('call', call => {
           if (!isHost) {
-            // Viewer receives host's screen+audio
+            // Viewer: could be host (screen+audio) or other participants (audio only)
             call.answer();
             call.on('stream', remote => {
-              setRemoteStream(remote);
-              setStatus('Receiving host screen & audio...');
+              // If video, it's from host; if audio only, from participant
+              if (remote.getVideoTracks().length) {
+                setRemoteStream(remote);
+                setStatus('Receiving host screen & audio...');
+              } else {
+                // Mesh audio: play participant audio
+                const audio = new window.Audio();
+                audio.srcObject = remote;
+                audio.autoplay = true;
+                audio.playsInline = true;
+                document.body.appendChild(audio);
+                audioElementsRef.current.push(audio);
+                setStatus('Receiving participant audio');
+              }
             });
+            meshCallsRef.current.push(call);
           } else {
-            // Host receives viewer's mic audio
+            // Host receives participant mic
             call.answer();
             call.on('stream', viewerMic => {
-              // Create and play a new audio element for this viewer
+              // Play participant audio
               const audio = new window.Audio();
               audio.srcObject = viewerMic;
               audio.autoplay = true;
               audio.playsInline = true;
-              document.body.appendChild(audio); // Keep it alive
+              document.body.appendChild(audio);
               audioElementsRef.current.push(audio);
               setStatus('Receiving participant audio');
             });
@@ -78,16 +92,39 @@
           connectionsRef.current.push(conn);
           conn.on('open', () => {
             setStatus('Participant connected');
-            // When host is sharing, call the new participant
-            if (isHost && stream) {
-              const call = peer.call(conn.peer, stream);
-              callsRef.current.push(call);
+            // For host: update participant list and broadcast it
+            if (isHost) {
+              setParticipantList(list => {
+                const newList = Array.from(new Set([...list, conn.peer]));
+                // Broadcast new list to all participants
+                connectionsRef.current.forEach(c => {
+                  c.send({ type: 'participant-list', list: newList });
+                });
+                return newList;
+              });
+              // When host is sharing, call the new participant
+              if (stream) {
+                const call = peer.call(conn.peer, stream);
+                callsRef.current.push(call);
+              }
+            }
+          });
+          // For host: handle participant disconnect
+          conn.on('close', () => {
+            if (isHost) {
+              setParticipantList(list => {
+                const newList = list.filter(pid => pid !== conn.peer);
+                // Broadcast new list to all participants
+                connectionsRef.current.forEach(c => {
+                  c.send({ type: 'participant-list', list: newList });
+                });
+                return newList;
+              });
             }
           });
         });
 
         return () => {
-          // Cleanup
           if (stream) stream.getTracks().forEach(t => t.stop());
           audioElementsRef.current.forEach(audio => audio.remove());
           peer.destroy();
@@ -156,7 +193,7 @@
         }
       };
 
-      // Viewer: connect to host
+      // Viewer: connect to host and mesh with other participants
       const connectToHost = async () => {
         if (!peerRef.current || !remoteId) return;
         const conn = peerRef.current.connect(remoteId);
@@ -172,12 +209,30 @@
           const call = peerRef.current.call(remoteId, micStream);
           setStatus('Connected to host');
         });
+
+        // Listen for participant list from host
+        conn.on('data', async (data) => {
+          if (data.type === 'participant-list') {
+            // For each participant in the list (except self), call them with mic audio
+            for (const pid of data.list) {
+              if (pid !== peerRef.current.id) {
+                // Only call if not already connected
+                if (!meshCallsRef.current.some(c => c.peer === pid)) {
+                  try {
+                    const call = peerRef.current.call(pid, micStream);
+                    meshCallsRef.current.push(call);
+                  } catch (e) {}
+                }
+              }
+            }
+          }
+        });
       };
 
       // UI
       return (
         <div className="w-full max-w-4xl mx-auto bg-gray-800 shadow-lg rounded p-6 mt-8">
-          <h1 className="text-3xl font-bold text-purple-400 mb-4 text-center">SyncLite Many-to-Many Screen Share - V37</h1>
+          <h1 className="text-3xl font-bold text-purple-400 mb-4 text-center">SyncLite Many-to-Many Mesh Audio - V38</h1>
 
           <div className="flex items-center space-x-2 mb-4">
             <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
@@ -187,6 +242,7 @@
           <div className="bg-gray-700 p-3 rounded mb-4 text-sm space-y-1 text-white">
             {isHost && <p><strong>Peer ID:</strong> {peerId}</p>}
             <p><strong>Status:</strong> {status}</p>
+            {isHost && <p><strong>Participants:</strong> {participantList.join(', ')}</p>}
           </div>
 
           {!isHost && (
