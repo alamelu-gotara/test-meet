@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Screen Share V11</title>
+  <title>SyncLite Screen Share V12</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -26,7 +26,8 @@
       const [stream, setStream] = useState(null);
       const [remoteStream, setRemoteStream] = useState(null);
       const videoRef = useRef(null);
-      const connRef = useRef(null); // keep reference to connection
+      const connRef = useRef(null);
+      const callRef = useRef(null);
 
       useEffect(() => {
         const p = new Peer();
@@ -35,12 +36,23 @@
           setStatus('Ready');
         });
 
-        p.on('call', call => {
+        // Host receives viewer mic stream
+        p.on('call', async call => {
           if (!isHost) {
-            call.answer(); // Viewer answers call
+            // Viewer answering call from host (host screen+mic)
+            call.answer();
             call.on('stream', remote => {
               setRemoteStream(remote);
-              setStatus('Receiving screen...');
+              setStatus('Receiving host screen & audio...');
+            });
+          } else {
+            // Host receiving viewer mic stream
+            call.answer(); // no local stream
+            call.on('stream', viewerMic => {
+              const audio = new Audio();
+              audio.srcObject = viewerMic;
+              audio.play();
+              setStatus('Receiving viewer audio');
             });
           }
         });
@@ -49,7 +61,8 @@
           connRef.current = conn;
           conn.on('open', () => {
             if (isHost && stream) {
-              const call = p.call(conn.peer, stream); // Host calls viewer
+              const call = p.call(conn.peer, stream);
+              callRef.current = call;
               setStatus('Connected to viewer');
             }
           });
@@ -76,7 +89,7 @@
         try {
           const screenStream = await navigator.mediaDevices.getDisplayMedia({
             video: true,
-            audio: false // Do NOT capture system audio
+            audio: false
           });
 
           const micStream = await navigator.mediaDevices.getUserMedia({
@@ -97,10 +110,9 @@
             setStatus('Screen sharing ended');
           });
 
-          // Call connected viewer immediately if available
           if (peer && connRef.current) {
             const call = peer.call(connRef.current.peer, combinedStream);
-            setStatus('Streaming to connected viewer');
+            callRef.current = call;
           }
 
         } catch (e) {
@@ -108,16 +120,24 @@
         }
       };
 
-      const connectToHost = () => {
+      const connectToHost = async () => {
         if (!peer || !remoteId) return;
         const conn = peer.connect(remoteId);
         connRef.current = conn;
-        setStatus('Waiting for host to call...');
+        setStatus('Connecting to host...');
+
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        conn.on('open', () => {
+          const call = peer.call(remoteId, micStream);
+          callRef.current = call;
+          setStatus('Connected to host');
+        });
       };
 
       return (
         <div className="max-w-md w-full bg-white shadow-lg rounded p-6">
-          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V11</h1>
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V12</h1>
 
           <div className="flex items-center space-x-2 mb-4">
             <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
