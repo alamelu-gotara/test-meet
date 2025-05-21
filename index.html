@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>SyncLite - V32 - Many to Many</title>
+  <title>SyncLite - V33 - Many to Many</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body class="bg-gray-100 p-4">
   <div class="max-w-3xl mx-auto space-y-4">
-    <h1 class="text-2xl font-bold text-center text-purple-600">SyncLite – V32 - Many-to-Many Share</h1>
+    <h1 class="text-2xl font-bold text-center text-purple-600">SyncLite – V33 - Many to Many</h1>
 
     <div class="space-y-2">
       <label class="block font-medium">Your Peer ID:</label>
@@ -28,6 +28,7 @@
     </div>
 
     <div id="videos" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6"></div>
+    <div id="status-message" class="text-center text-red-600"></div>
   </div>
 
   <script>
@@ -37,15 +38,34 @@
     const toggleMicBtn = document.getElementById("toggle-mic");
     const shareScreenBtn = document.getElementById("share-screen");
     const videosDiv = document.getElementById("videos");
+    const statusMessage = document.getElementById("status-message");
 
     const peer = new Peer();
-    const peers = {};
+    const peers = {}; // DataConnection objects: peerId -> conn
+    const calls = {}; // MediaConnection objects: peerId -> call
+
     let localStream = null;
     let micTrack = null;
     let isMuted = false;
+    let isSharingScreen = false;
+    let screenTrack = null;
 
-    const addVideoStream = (stream, label = "") => {
-      const video = document.createElement("video");
+    // Track current screen sharer across the room
+    let currentScreenSharer = null;
+
+    // Helper to clear all remote videos
+    function clearRemoteVideos() {
+      while (videosDiv.children.length > 1) {
+        videosDiv.removeChild(videosDiv.lastChild);
+      }
+    }
+
+    function addVideoStream(stream, label = "", id = "") {
+      // If id is specified, avoid duplicate videos
+      let video = null;
+      if (id && document.getElementById(id)) return;
+      video = document.createElement("video");
+      if (id) video.id = id;
       video.srcObject = stream;
       video.autoplay = true;
       video.playsInline = true;
@@ -61,37 +81,77 @@
       } else {
         videosDiv.appendChild(video);
       }
-    };
+    }
 
-    const getMic = async () => {
+    async function getMic() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micTrack = stream.getAudioTracks()[0];
       return stream;
-    };
+    }
 
-    const sendStreamToPeers = (stream) => {
-      Object.values(peers).forEach(remotePeerId => {
-        const call = peer.call(remotePeerId, stream);
-        call.on("stream", remoteStream => {
-          addVideoStream(remoteStream, "From " + remotePeerId);
+    // Broadcast to all peers: signal data, e.g. screen sharing
+    function broadcastMessage(type, data) {
+      Object.values(peers).forEach(conn => {
+        if (conn.open) conn.send({ type, data });
+      });
+    }
+
+    // Send localStream to all peers
+    function sendStreamToPeers(stream) {
+      Object.entries(calls).forEach(([peerId, call]) => {
+        // Replace audio or video tracks if possible
+        const pc = call.peerConnection;
+        const senders = pc.getSenders();
+        stream.getTracks().forEach(track => {
+          const sender = senders.find(s => s.track && s.track.kind === track.kind);
+          if (sender) {
+            sender.replaceTrack(track);
+          }
         });
       });
-    };
+    }
 
-    const connectToPeer = async (remoteId) => {
-      peers[remoteId] = remoteId;
+    async function connectToPeer(remoteId) {
+      if (peers[remoteId]) return;
+
       const conn = peer.connect(remoteId);
+      peers[remoteId] = conn;
+
       conn.on("open", async () => {
+        // Send info about current screen sharer
+        if (currentScreenSharer) {
+          conn.send({ type: "screen-share-status", data: currentScreenSharer });
+        }
+        // Send local stream
         if (!localStream) {
           const micStream = await getMic();
-          localStream = new MediaStream([micStream.getAudioTracks()[0]]);
+          micTrack = micStream.getAudioTracks()[0];
+          localStream = new MediaStream([micTrack]);
         }
         const call = peer.call(remoteId, localStream);
+        calls[remoteId] = call;
         call.on("stream", stream => {
-          addVideoStream(stream, "From " + remoteId);
+          addVideoStream(stream, "From " + remoteId, "video-" + remoteId);
         });
       });
-    };
+
+      conn.on("data", handlePeerMessage(remoteId));
+    }
+
+    function handlePeerMessage(remoteId) {
+      return msg => {
+        if (msg.type === "screen-share-status") {
+          currentScreenSharer = msg.data;
+          if (currentScreenSharer && currentScreenSharer !== peer.id) {
+            statusMessage.textContent = "Screen is being shared by: " + currentScreenSharer;
+            shareScreenBtn.disabled = true;
+          } else {
+            statusMessage.textContent = "";
+            shareScreenBtn.disabled = false;
+          }
+        }
+      };
+    }
 
     toggleMicBtn.onclick = () => {
       if (!micTrack) return;
@@ -103,14 +163,42 @@
     };
 
     shareScreenBtn.onclick = async () => {
+      if (currentScreenSharer && currentScreenSharer !== peer.id) {
+        alert("Screen already being shared by " + currentScreenSharer);
+        return;
+      }
       const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-      const combined = new MediaStream([...screenStream.getTracks(), micTrack]);
-      sendStreamToPeers(combined);
-      addVideoStream(combined, "Your Screen");
+      screenTrack = screenStream.getVideoTracks()[0];
+      isSharingScreen = true;
+      currentScreenSharer = peer.id;
+      broadcastMessage("screen-share-status", peer.id);
 
-      screenStream.getVideoTracks()[0].addEventListener("ended", () => {
-        // Stop screen sharing cleanup if needed
-      });
+      // Combine mic and screen
+      const combined = new MediaStream([screenTrack, micTrack]);
+      localStream = combined;
+      sendStreamToPeers(combined);
+
+      addVideoStream(combined, "Your Screen", "video-local");
+
+      shareScreenBtn.disabled = true;
+      statusMessage.textContent = "You are sharing your screen";
+
+      screenTrack.onended = () => {
+        // Stop sharing, revert to mic only
+        isSharingScreen = false;
+        currentScreenSharer = null;
+        broadcastMessage("screen-share-status", null);
+        shareScreenBtn.disabled = false;
+        statusMessage.textContent = "";
+
+        // Switch back to mic only
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(micStream => {
+          micTrack = micStream.getAudioTracks()[0];
+          localStream = new MediaStream([micTrack]);
+          sendStreamToPeers(localStream);
+          addVideoStream(localStream, "Your Audio", "video-local");
+        });
+      };
     };
 
     connectBtn.onclick = async () => {
@@ -126,18 +214,22 @@
       const micStream = await getMic();
       micTrack = micStream.getAudioTracks()[0];
       localStream = new MediaStream([micTrack]);
+      addVideoStream(localStream, "Your Audio", "video-local");
     });
 
     peer.on("call", call => {
       call.answer(localStream);
+      calls[call.peer] = call;
       call.on("stream", remoteStream => {
-        addVideoStream(remoteStream, "From " + call.peer);
+        addVideoStream(remoteStream, "From " + call.peer, "video-" + call.peer);
       });
     });
 
     peer.on("connection", conn => {
-      peers[conn.peer] = conn.peer;
+      peers[conn.peer] = conn;
+      conn.on("data", handlePeerMessage(conn.peer));
     });
+
   </script>
 </body>
 </html>
