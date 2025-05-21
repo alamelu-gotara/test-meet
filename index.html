@@ -1,149 +1,162 @@
-<!-- SyncLite V20: Many-to-Many Audio + Single Screen Sharing -->
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>SyncLite V30</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-</head>
-<body class="bg-gray-100 p-4">
-  <div id="root"></div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SyncLite - V31 - Many-to-Many</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  </head>
+  <body class="bg-gray-100">
+    <div id="root" class="min-h-screen flex items-center justify-center p-4"></div>
 
-  <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    <script type="text/babel">
+      const { useState, useEffect, useRef } = React;
 
-    function App() {
-      const [peerId, setPeerId] = useState('');
-      const [peers, setPeers] = useState({});
-      const [stream, setStream] = useState(null);
-      const [screenStream, setScreenStream] = useState(null);
-      const [isMuted, setIsMuted] = useState(false);
-      const [remoteStreams, setRemoteStreams] = useState([]);
-      const [screenSource, setScreenSource] = useState(null);
-      const myVideo = useRef();
-      const peer = useRef();
-      const connections = useRef({});
+      function App() {
+        const [peerId, setPeerId] = useState("");
+        const [peers, setPeers] = useState([]);
+        const [remoteId, setRemoteId] = useState("");
+        const [status, setStatus] = useState("Initializing...");
+        const [localStream, setLocalStream] = useState(null);
+        const [remoteStreams, setRemoteStreams] = useState([]);
+        const [muted, setMuted] = useState(false);
+        const peerRef = useRef(null);
+        const connectionsRef = useRef({});
+        const localVideoRef = useRef(null);
 
-      useEffect(() => {
-        const p = new Peer();
-        peer.current = p;
+        useEffect(() => {
+          const peer = new Peer();
+          peerRef.current = peer;
 
-        p.on('open', id => {
-          setPeerId(id);
-        });
-
-        p.on('call', call => {
-          call.answer(stream);
-          call.on('stream', remote => handleNewRemoteStream(call.peer, remote));
-        });
-
-        return () => p.destroy();
-      }, [stream]);
-
-      useEffect(() => {
-        if (myVideo.current && stream) {
-          myVideo.current.srcObject = stream;
-        }
-      }, [stream]);
-
-      const startMic = async () => {
-        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        setStream(micStream);
-      };
-
-      const connectToPeer = (remoteId) => {
-        if (!stream || !remoteId || remoteId === peerId) return;
-        const call = peer.current.call(remoteId, stream);
-        call.on('stream', remote => handleNewRemoteStream(remoteId, remote));
-        connections.current[remoteId] = call;
-      };
-
-      const handleNewRemoteStream = (peerId, remote) => {
-        setRemoteStreams(prev => {
-          const filtered = prev.filter(item => item.peerId !== peerId);
-          return [...filtered, { peerId, stream: remote }];
-        });
-      };
-
-      const toggleMute = () => {
-        if (!stream) return;
-        const enabled = !isMuted;
-        stream.getAudioTracks().forEach(track => (track.enabled = enabled));
-        setIsMuted(!enabled);
-      };
-
-      const shareScreen = async () => {
-        const sStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        setScreenStream(sStream);
-        setScreenSource(peerId);
-
-        Object.keys(connections.current).forEach(remoteId => {
-          const call = peer.current.call(remoteId, sStream);
-          call.on('stream', remote => {
-            // Skip: we don’t play it here
+          peer.on("open", (id) => {
+            setPeerId(id);
+            setStatus("Ready to connect");
           });
-        });
 
-        sStream.getVideoTracks()[0].addEventListener('ended', () => {
-          setScreenStream(null);
-          setScreenSource(null);
-        });
-      };
+          peer.on("call", (call) => {
+            call.answer(localStream);
+            call.on("stream", (remoteStream) => {
+              addRemoteStream(remoteStream, call.peer);
+            });
+          });
 
-      return (
-        <div className="max-w-2xl mx-auto bg-white p-6 rounded shadow-md space-y-4">
-          <h1 className="text-2xl font-bold text-purple-600 text-center">SyncLite V30</h1>
-          <p className="text-sm text-center">Your ID: <code className="bg-gray-100 px-2 py-1 rounded">{peerId}</code></p>
+          setPeers([]);
 
-          <div className="flex gap-2">
-            <button onClick={startMic} className="bg-blue-600 text-white px-4 py-2 rounded">Start Mic</button>
-            <button onClick={shareScreen} className="bg-purple-600 text-white px-4 py-2 rounded">Share Screen</button>
-            <button onClick={toggleMute} className={`px-4 py-2 rounded text-white ${isMuted ? 'bg-green-600' : 'bg-red-600'}`}>
-              {isMuted ? 'Unmute' : 'Mute'}
-            </button>
+          return () => peer.destroy();
+        }, [localStream]);
+
+        const addRemoteStream = (stream, id) => {
+          setRemoteStreams((prev) => {
+            if (prev.some((s) => s.id === id)) return prev;
+            return [...prev, { id, stream }];
+          });
+        };
+
+        const getLocalAudio = async () => {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          setLocalStream(stream);
+          localVideoRef.current.srcObject = stream;
+        };
+
+        const callAllPeers = (stream) => {
+          peers.forEach((id) => {
+            const call = peerRef.current.call(id, stream);
+            call.on("stream", (remoteStream) => {
+              addRemoteStream(remoteStream, id);
+            });
+            connectionsRef.current[id] = call;
+          });
+        };
+
+        const connectToPeer = () => {
+          if (!remoteId || remoteId === peerId) return;
+          if (peers.includes(remoteId)) return;
+
+          const conn = peerRef.current.connect(remoteId);
+          conn.on("open", () => {
+            setPeers((prev) => [...prev, remoteId]);
+            if (localStream) {
+              const call = peerRef.current.call(remoteId, localStream);
+              call.on("stream", (remoteStream) => {
+                addRemoteStream(remoteStream, remoteId);
+              });
+              connectionsRef.current[remoteId] = call;
+            }
+          });
+        };
+
+        const toggleMute = () => {
+          localStream.getAudioTracks().forEach((track) => {
+            track.enabled = !track.enabled;
+          });
+          setMuted((prev) => !prev);
+        };
+
+        const shareScreen = async () => {
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const combinedStream = new MediaStream([
+            ...screenStream.getVideoTracks(),
+            ...audioStream.getAudioTracks(),
+          ]);
+          setLocalStream(combinedStream);
+          localVideoRef.current.srcObject = combinedStream;
+          callAllPeers(combinedStream);
+        };
+
+        return (
+          <div className="bg-white p-6 rounded shadow-lg w-full max-w-xl">
+            <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V31 - Many-to-Many</h1>
+
+            <div className="text-sm bg-gray-100 p-3 rounded mb-4">
+              <p><strong>Your Peer ID:</strong> {peerId}</p>
+              <p><strong>Status:</strong> {status}</p>
+            </div>
+
+            <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-48 bg-black rounded mb-4" />
+
+            <div className="flex space-x-2 mb-4">
+              <button onClick={getLocalAudio} className="flex-1 bg-blue-600 text-white py-2 px-4 rounded font-semibold">Join Audio</button>
+              <button onClick={toggleMute} className={`flex-1 py-2 px-4 rounded font-semibold ${muted ? 'bg-red-600' : 'bg-green-600'} text-white`}>
+                {muted ? "Unmute" : "Mute"}
+              </button>
+              <button onClick={shareScreen} className="flex-1 bg-purple-600 text-white py-2 px-4 rounded font-semibold">Share Screen</button>
+            </div>
+
+            <div className="flex space-x-2 mb-4">
+              <input
+                className="border p-2 rounded flex-1"
+                placeholder="Enter Peer ID to connect"
+                value={remoteId}
+                onChange={(e) => setRemoteId(e.target.value)}
+              />
+              <button onClick={connectToPeer} className="bg-gray-700 text-white py-2 px-4 rounded">Connect</button>
+            </div>
+
+            <div className="space-y-4">
+              {remoteStreams.map(({ id, stream }) => (
+                <div key={id} className="border p-2 rounded bg-gray-50">
+                  <p className="text-sm text-gray-500">Peer: {id}</p>
+                  <video
+                    autoPlay
+                    playsInline
+                    srcObject={stream}
+                    onCanPlay={(e) => e.target.play()}
+                    className="w-full h-40 bg-black rounded"
+                  />
+                </div>
+              ))}
+            </div>
           </div>
+        );
+      }
 
-          <div className="flex items-center space-x-2 mt-2">
-            <input type="text" id="peerInput" className="border px-2 py-1 flex-1 rounded" placeholder="Peer ID to connect" />
-            <button onClick={() => connectToPeer(document.getElementById('peerInput').value)} className="bg-gray-800 text-white px-4 py-1 rounded">Connect</button>
-          </div>
-
-          <h2 className="text-lg font-semibold mt-4">My Audio</h2>
-          <audio ref={myVideo} autoPlay muted controls className="w-full" />
-
-          <h2 className="text-lg font-semibold mt-4">Remote Audio</h2>
-          {remoteStreams.map(({ peerId, stream }) => (
-            <div key={peerId} className="mb-2">
-              <p className="text-sm font-medium">From: {peerId}</p>
-              <audio autoPlay controls srcObject={stream} className="w-full"
-                     ref={el => el && (el.srcObject = stream)} />
-            </div>
-          ))}
-
-          {screenStream && (
-            <div className="mt-4">
-              <h2 className="text-lg font-semibold">You are sharing screen</h2>
-              <video autoPlay playsInline muted controls className="w-full max-h-[300px]"
-                     srcObject={screenStream}
-                     ref={el => el && (el.srcObject = screenStream)} />
-            </div>
-          )}
-
-          {!screenStream && screenSource && (
-            <div className="mt-4">
-              <h2 className="text-lg font-semibold">Watching screen shared by {screenSource}</h2>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-  </script>
-</body>
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
 </html>
