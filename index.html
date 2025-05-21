@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Screen Share - Many-to-Many - V23</title>
+  <title>SyncLite Screen Share V24 - Many to Many</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -17,582 +17,578 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // Helper to manage audio elements globally to avoid React re-render issues with them
-    const audioElements = new Map();
-
-    function manageAudioElement(peerId, stream) {
-      let audio = audioElements.get(peerId);
-      if (stream) {
-        if (!audio) {
-          audio = document.createElement('audio');
-          audio.autoplay = true;
-          audio.playsInline = true;
-          // For debugging, you can append to body:
-          // audio.controls = true; 
-          // document.body.appendChild(audio); 
-          audioElements.set(peerId, audio);
-        }
-        audio.srcObject = stream;
-        audio.play().catch(e => console.warn(`Audio play failed for ${peerId}:`, e));
-      } else {
-        if (audio) {
-          audio.srcObject = null;
-          // Optionally remove element if peer fully disconnects and won't reconnect
-          // For now, we keep it for potential re-use or until page unloads
-        }
-      }
-    }
-
-
     function App() {
+      const [roomId, setRoomId] = useState('');
       const [myPeerId, setMyPeerId] = useState('');
+      const [displayName, setDisplayName] = useState('');
       const [status, setStatus] = useState('Initializing...');
-      const [peer, setPeer] = useState(null);
-
-      const [localAudioStream, setLocalAudioStream] = useState(null);
-      const [localScreenStream, setLocalScreenStream] = useState(null);
-      const [isMyAudioMuted, setIsMyAudioMuted] = useState(false);
-
-      const [targetPeerIdInput, setTargetPeerIdInput] = useState(''); 
+      const [isInRoom, setIsInRoom] = useState(false);
+      const [isScreenSharing, setIsScreenSharing] = useState(false);
+      const [isAudioMuted, setIsAudioMuted] = useState(false);
+      const [participants, setParticipants] = useState([]);
       
-      const connectedPeersRef = useRef(new Map()); 
-      const [connectedPeersUI, setConnectedPeersUI] = useState([]); 
+      const peer = useRef(null);
+      const myStream = useRef(null);
+      const connections = useRef({});
+      const calls = useRef({});
+      const streams = useRef({});
+      const myMicTrack = useRef(null);
 
-      const outgoingCallsRef = useRef(new Map());
-
-      const [currentScreenSharerId, setCurrentScreenSharerId] = useState(null);
-      const [displayedScreenStream, setDisplayedScreenStream] = useState(null);
-      
-      const screenVideoRef = useRef(null);
-
+      // Initialize PeerJS
       useEffect(() => {
-        const p = new Peer(undefined, {
-            // debug: 3, // Uncomment for verbose PeerJS logs
-            // Add STUN/TURN servers for better connectivity across NATs
-            // config: {
-            //   iceServers: [
-            //     { urls: 'stun:stun.l.google.com:19302' },
-            //     // { urls: 'turn:your.turn.server', username: 'user', credential: 'password' }
-            //   ]
-            // }
-        });
-        setPeer(p);
-
+        const p = new Peer();
+        
         p.on('open', id => {
           setMyPeerId(id);
-          setStatus(`Ready. Your ID: ${id}`);
-          navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-            .then(stream => {
-              setLocalAudioStream(stream);
-            })
-            .catch(err => {
-              console.error('Failed to get local audio stream', err);
-              setStatus('Error: Failed to get microphone. Audio chat may not work.');
-            });
+          setStatus('Ready to join or create a room');
         });
 
-        p.on('connection', (dataConnection) => {
-          console.log(`Incoming connection from ${dataConnection.peer}`);
-          addPeer(dataConnection);
+        // Handle incoming connections
+        p.on('connection', conn => {
+          handleNewConnection(conn);
         });
 
-        p.on('call', (call) => {
-          const remotePeerId = call.peer;
-          console.log(`Incoming call from ${remotePeerId}`);
-          
-          // Ensure a peer detail entry exists, even if minimal
-          let peerDetail = connectedPeersRef.current.get(remotePeerId);
-          if (!peerDetail) {
-              console.warn(`Call from ${remotePeerId}, but no full peerDetail yet. Creating minimal entry.`);
-              peerDetail = { dc: null }; 
-              connectedPeersRef.current.set(remotePeerId, peerDetail);
-              updateConnectedPeersUIState();
+        // Handle incoming calls
+        p.on('call', call => {
+          handleIncomingCall(call);
+        });
+
+        peer.current = p;
+
+        return () => {
+          // Clean up
+          if (myStream.current) {
+            myStream.current.getTracks().forEach(track => track.stop());
           }
           
-          if (localAudioStream) {
-            call.answer(localAudioStream);
-          } else {
-            call.answer();
-          }
+          // Close all connections
+          Object.values(connections.current).forEach(conn => conn.close());
+          
+          // Close all calls
+          Object.values(calls.current).forEach(call => call.close());
+          
+          p.destroy();
+        };
+      }, []);
 
-          call.on('stream', remoteStream => {
-            console.log(`Received stream from ${remotePeerId}. Video tracks: ${remoteStream.getVideoTracks().length}, Audio tracks: ${remoteStream.getAudioTracks().length}`);
-            const currentPeerDetail = connectedPeersRef.current.get(remotePeerId); // Re-fetch, might have been updated
-            if (!currentPeerDetail) {
-                console.error("Critical: Peer detail disappeared for ", remotePeerId);
-                return;
-            }
-
-            if (remoteStream.getVideoTracks().length > 0) {
-              console.log(`It's a screen share stream from ${remotePeerId}`);
-              currentPeerDetail.screenStream = remoteStream;
-              currentPeerDetail.theirScreenCall = call; // Store the call object for this incoming screen stream
-              if (currentScreenSharerId === remotePeerId) {
-                setDisplayedScreenStream(remoteStream);
-              }
-            } else if (remoteStream.getAudioTracks().length > 0) {
-              console.log(`It's an audio stream from ${remotePeerId}`);
-              currentPeerDetail.audioStream = remoteStream;
-              currentPeerDetail.theirAudioCall = call; // Store the call object for this incoming audio stream
-              manageAudioElement(remotePeerId, remoteStream);
-            } else {
-                console.warn("Received stream with no tracks from ", remotePeerId);
-            }
-            updateConnectedPeersUIState();
+      const handleNewConnection = (conn) => {
+        const peerId = conn.peer;
+        
+        connections.current[peerId] = conn;
+        
+        conn.on('open', () => {
+          // Send my info to the new participant
+          conn.send({
+            type: 'USER_INFO',
+            peerId: myPeerId,
+            displayName: displayName,
+            isScreenSharing: isScreenSharing
           });
+          
+          // Send list of other participants to the new participant
+          conn.send({
+            type: 'PARTICIPANTS_LIST',
+            participants: participants
+          });
+          
+          setStatus(`${peerId} connected`);
+        });
+        
+        conn.on('data', data => {
+          handleDataMessage(data, peerId);
+        });
+        
+        conn.on('close', () => {
+          removeParticipant(peerId);
+        });
+      };
 
-          call.on('close', () => {
-            console.log(`Call from ${remotePeerId} closed.`);
-            const pd = connectedPeersRef.current.get(remotePeerId);
-            if (pd) {
-              if (pd.theirScreenCall === call) { 
-                pd.screenStream = null;
-                pd.theirScreenCall = null;
-                if (currentScreenSharerId === remotePeerId) {
-                  setCurrentScreenSharerId(null);
-                  setDisplayedScreenStream(null);
+      const handleIncomingCall = (call) => {
+        const peerId = call.peer;
+        
+        // Answer the call with my audio stream if available, otherwise empty stream
+        let answerStream = new MediaStream();
+        if (myMicTrack.current) {
+          answerStream.addTrack(myMicTrack.current);
+        }
+        
+        call.answer(answerStream);
+        
+        calls.current[peerId] = call;
+        
+        call.on('stream', remoteStream => {
+          streams.current[peerId] = remoteStream;
+          
+          // Update the participants list with the new stream
+          setParticipants(prevParticipants => 
+            prevParticipants.map(p => 
+              p.peerId === peerId ? { ...p, hasStream: true } : p
+            )
+          );
+        });
+        
+        call.on('close', () => {
+          // Handle call closed
+          if (streams.current[peerId]) {
+            delete streams.current[peerId];
+            
+            setParticipants(prevParticipants => 
+              prevParticipants.map(p => 
+                p.peerId === peerId ? { ...p, hasStream: false } : p
+              )
+            );
+          }
+        });
+      };
+
+      const handleDataMessage = (data, fromPeerId) => {
+        if (!data.type) return;
+        
+        switch (data.type) {
+          case 'USER_INFO':
+            // Add new participant to the list
+            addParticipant({
+              peerId: data.peerId,
+              displayName: data.displayName,
+              isScreenSharing: data.isScreenSharing,
+              hasStream: false
+            });
+            break;
+            
+          case 'PARTICIPANTS_LIST':
+            // Add all participants from the list
+            data.participants.forEach(participant => {
+              if (participant.peerId !== myPeerId) {
+                addParticipant(participant);
+                
+                // Connect to this participant if not already connected
+                if (!connections.current[participant.peerId]) {
+                  connectToPeer(participant.peerId);
                 }
               }
-              if (pd.theirAudioCall === call) {
-                 manageAudioElement(remotePeerId, null);
-                 pd.audioStream = null;
-                 pd.theirAudioCall = null;
-              }
-            }
-            updateConnectedPeersUIState();
-          });
-           call.on('error', (err) => {
-            console.error(`Call error with ${remotePeerId}:`, err);
-            const pd = connectedPeersRef.current.get(remotePeerId);
-            if (pd) { // Simplified error handling: treat as close for cleanup
-              if (pd.theirScreenCall === call) { pd.screenStream = null; pd.theirScreenCall = null; if (currentScreenSharerId === remotePeerId) { setCurrentScreenSharerId(null); setDisplayedScreenStream(null);}}
-              if (pd.theirAudioCall === call) { manageAudioElement(remotePeerId, null); pd.audioStream = null; pd.theirAudioCall = null; }
-            }
-            updateConnectedPeersUIState();
-          });
-        });
-
-        p.on('disconnected', () => { setStatus('Disconnected from PeerJS server.'); console.log('PeerJS disconnected');});
-        p.on('error', err => {
-          console.error('PeerJS error:', err);
-          setStatus(`PeerJS Error: ${err.type || err.message}`);
-          if (err.type === 'peer-unavailable') {
-            const unavailablePeer = err.message.match(/Could not connect to peer\s(.*?)$/)?.[1];
-            setStatus(`Peer ${unavailablePeer || targetPeerIdInput || 'unknown'} is unavailable.`);
-          } else if (err.type === 'network') {
-             setStatus('Network error with PeerJS. Please check your connection.');
-          }
-        });
-
-        // Cleanup on component unmount
-        return () => {
-          console.log("Cleaning up PeerJS connection and streams.");
-          localAudioStream?.getTracks().forEach(t => t.stop());
-          localScreenStream?.getTracks().forEach(t => t.stop());
-          
-          connectedPeersRef.current.forEach((detail, peerId) => {
-            detail.dc?.close();
-            detail.theirAudioCall?.close();
-            detail.theirScreenCall?.close();
-            manageAudioElement(peerId, null); 
-          });
-          outgoingCallsRef.current.forEach(calls => {
-            calls.audio?.close();
-            calls.screen?.close();
-          });
-          
-          audioElements.forEach(audioEl => {
-            audioEl.srcObject = null; // Stop playback
-            audioEl.remove(); // Remove from DOM if dynamically added
-          });
-          audioElements.clear();
-          
-          if (p && !p.destroyed) {
-            p.destroy();
-          }
-        };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, []); 
-
-      const updateConnectedPeersUIState = () => {
-        // Force re-render by creating a new array of keys
-        setConnectedPeersUI(Array.from(connectedPeersRef.current.keys()));
-      };
-      
-      const addPeer = (dataConnection) => {
-        const remotePeerId = dataConnection.peer;
-        
-        // Avoid duplicate setup if already connected or connection is pending
-        if (connectedPeersRef.current.has(remotePeerId) && connectedPeersRef.current.get(remotePeerId).dc) {
-            console.log(`Data connection with ${remotePeerId} already exists or being established.`);
-            // If the existing DC is not this one, it might be a race, prefer the new one or log
-            if(connectedPeersRef.current.get(remotePeerId).dc !== dataConnection) {
-                console.warn("New DC object for existing peer ", remotePeerId);
-                // Potentially close old one if it's different and this is a fresh attempt
-            }
-             // Update with the new DC object anyway, PeerJS might handle underlying channel correctly
-            connectedPeersRef.current.get(remotePeerId).dc = dataConnection;
-        } else {
-            connectedPeersRef.current.set(remotePeerId, { dc: dataConnection });
-        }
-        updateConnectedPeersUIState();
-        setStatus(`Connection attempt with ${remotePeerId}.`);
-
-        dataConnection.on('open', () => {
-          setStatus(`Data connection established with ${remotePeerId}.`);
-          console.log(`Data connection open with ${remotePeerId}`);
-          
-          if (localAudioStream) {
-            console.log(`Calling ${remotePeerId} with local audio stream.`);
-            const audioCall = peer.call(remotePeerId, localAudioStream);
-            const calls = outgoingCallsRef.current.get(remotePeerId) || {};
-            calls.audio = audioCall;
-            outgoingCallsRef.current.set(remotePeerId, calls);
-          }
-          
-          if (localScreenStream && currentScreenSharerId === myPeerId) {
-            console.log(`I am sharing screen, calling ${remotePeerId} with screen stream.`);
-            const screenCall = peer.call(remotePeerId, localScreenStream);
-            const calls = outgoingCallsRef.current.get(remotePeerId) || {};
-            calls.screen = screenCall;
-            outgoingCallsRef.current.set(remotePeerId, calls);
-            dataConnection.send({ type: 'SCREEN_SHARE_STARTED', sharerId: myPeerId });
-          } else if (currentScreenSharerId && currentScreenSharerId !== myPeerId) {
-            console.log(`Informing ${remotePeerId} that ${currentScreenSharerId} is sharing.`);
-            dataConnection.send({ type: 'SCREEN_SHARE_STARTED', sharerId: currentScreenSharerId });
-          }
-        });
-
-        dataConnection.on('data', (data) => {
-          console.log(`Data from ${remotePeerId}:`, data);
-          handleDataMessage(remotePeerId, data);
-        });
-
-        dataConnection.on('close', () => {
-          setStatus(`Data connection with ${remotePeerId} closed.`);
-          console.log(`Data connection closed with ${remotePeerId}`);
-          handlePeerDisconnect(remotePeerId);
-        });
-         dataConnection.on('error', (err) => {
-          console.error(`Data connection error with ${remotePeerId}:`, err);
-          setStatus(`Connection error with ${remotePeerId}.`);
-          handlePeerDisconnect(remotePeerId); 
-        });
-      };
-
-      const handlePeerDisconnect = (remotePeerId) => {
-        console.log(`Handling disconnect for ${remotePeerId}`);
-        const peerDetail = connectedPeersRef.current.get(remotePeerId);
-        if (peerDetail) {
-            manageAudioElement(remotePeerId, null); 
-            peerDetail.theirAudioCall?.close();
-            peerDetail.theirScreenCall?.close();
-        }
-
-        connectedPeersRef.current.delete(remotePeerId);
-        
-        const outgoing = outgoingCallsRef.current.get(remotePeerId);
-        outgoing?.audio?.close();
-        outgoing?.screen?.close();
-        outgoingCallsRef.current.delete(remotePeerId);
-
-        if (currentScreenSharerId === remotePeerId) {
-          setCurrentScreenSharerId(null);
-          setDisplayedScreenStream(null);
-        }
-        updateConnectedPeersUIState();
-        
-        // Clean up global audio element if it exists
-        const audioEl = audioElements.get(remotePeerId);
-        if (audioEl) {
-            audioEl.srcObject = null;
-            audioEl.remove();
-            audioElements.delete(remotePeerId);
-        }
-      };
-      
-      const handleConnectToPeer = () => {
-        if (!peer || !myPeerId || !targetPeerIdInput.trim()) {
-          setStatus('Cannot connect: PeerJS not ready or no target ID specified.');
-          return;
-        }
-        if (targetPeerIdInput.trim() === myPeerId) {
-          setStatus('Cannot connect to self.');
-          return;
-        }
-        if (connectedPeersRef.current.has(targetPeerIdInput.trim()) && connectedPeersRef.current.get(targetPeerIdInput.trim()).dc?.open) {
-          setStatus(`Already connected to ${targetPeerIdInput.trim()}.`);
-          return;
-        }
-        setStatus(`Connecting to ${targetPeerIdInput.trim()}...`);
-        const dataConnection = peer.connect(targetPeerIdInput.trim(), { reliable: true });
-        // addPeer will be called by the 'connection' event if successful, or handle errors
-        // For outgoing, we also call addPeer to set up handlers for this specific DC object
-        addPeer(dataConnection); 
-        setTargetPeerIdInput(''); 
-      };
-
-      const handleDataMessage = (fromPeerId, data) => {
-        switch (data.type) {
-          case 'SCREEN_SHARE_STARTED':
-            console.log(`Received SCREEN_SHARE_STARTED from ${data.sharerId}`);
-            setStatus(`Peer ${data.sharerId} started screen sharing.`);
+            });
+            break;
             
-            if (localScreenStream && data.sharerId !== myPeerId) {
-              console.log("Another peer started sharing, stopping my current share.");
-              stopScreenShare(false); // false: don't broadcast stop, I'm reacting
-            }
-            setCurrentScreenSharerId(data.sharerId);
-            if (data.sharerId === myPeerId) {
-              setDisplayedScreenStream(localScreenStream); 
-            } else {
-              const sharerDetails = connectedPeersRef.current.get(data.sharerId);
-              if (sharerDetails?.screenStream) {
-                setDisplayedScreenStream(sharerDetails.screenStream);
-              } else {
-                console.log(`Expecting screen stream from ${data.sharerId}, clearing current display.`);
-                setDisplayedScreenStream(null); 
-              }
-            }
+          case 'SCREEN_SHARING_STARTED':
+            // Update participant's screen sharing status
+            setParticipants(prevParticipants => 
+              prevParticipants.map(p => 
+                p.peerId === fromPeerId ? { ...p, isScreenSharing: true } : p
+              )
+            );
             break;
-          case 'SCREEN_SHARE_STOPPED':
-            console.log(`Received SCREEN_SHARE_STOPPED from ${data.sharerId}`);
-            setStatus(`Peer ${data.sharerId} stopped screen sharing.`);
-            if (currentScreenSharerId === data.sharerId) {
-              setCurrentScreenSharerId(null);
-              setDisplayedScreenStream(null);
-              const sharerDetails = connectedPeersRef.current.get(data.sharerId);
-              if(sharerDetails) sharerDetails.screenStream = null; 
-            }
+            
+          case 'SCREEN_SHARING_STOPPED':
+            // Update participant's screen sharing status
+            setParticipants(prevParticipants => 
+              prevParticipants.map(p => 
+                p.peerId === fromPeerId ? { ...p, isScreenSharing: false } : p
+              )
+            );
             break;
+            
           default:
-            console.log('Received unknown data message type:', data.type, 'from:', fromPeerId);
+            break;
         }
       };
 
-      const broadcastMessage = (message) => {
-        console.log("Broadcasting message: ", message);
-        connectedPeersRef.current.forEach((peerDetail, peerId) => {
-          if (peerDetail.dc && peerDetail.dc.open) {
-            try {
-              peerDetail.dc.send(message);
-            } catch (e) {
-              console.error(`Failed to send message to ${peerId}: `, e);
-            }
+      const addParticipant = (participant) => {
+        // Check if participant already exists
+        setParticipants(prevParticipants => {
+          const exists = prevParticipants.some(p => p.peerId === participant.peerId);
+          if (!exists) {
+            return [...prevParticipants, participant];
+          }
+          return prevParticipants;
+        });
+      };
+
+      const removeParticipant = (peerId) => {
+        // Remove participant from the list
+        setParticipants(prevParticipants => 
+          prevParticipants.filter(p => p.peerId !== peerId)
+        );
+        
+        // Clean up resources
+        if (connections.current[peerId]) {
+          connections.current[peerId].close();
+          delete connections.current[peerId];
+        }
+        
+        if (calls.current[peerId]) {
+          calls.current[peerId].close();
+          delete calls.current[peerId];
+        }
+        
+        if (streams.current[peerId]) {
+          delete streams.current[peerId];
+        }
+      };
+
+      const connectToPeer = (remotePeerId) => {
+        if (!peer.current || !remotePeerId || remotePeerId === myPeerId) return;
+        
+        // Create a data connection
+        const conn = peer.current.connect(remotePeerId);
+        connections.current[remotePeerId] = conn;
+        
+        conn.on('open', () => {
+          // Send my info to the remote peer
+          conn.send({
+            type: 'USER_INFO',
+            peerId: myPeerId,
+            displayName: displayName,
+            isScreenSharing: isScreenSharing
+          });
+          
+          // If I'm screen sharing, call the remote peer
+          if (myStream.current) {
+            callPeer(remotePeerId);
           }
         });
+        
+        conn.on('data', data => {
+          handleDataMessage(data, remotePeerId);
+        });
+        
+        conn.on('close', () => {
+          removeParticipant(remotePeerId);
+        });
+      };
+
+      const callPeer = (remotePeerId) => {
+        if (!peer.current || !remotePeerId || !myStream.current) return;
+        
+        // Create a media call
+        const call = peer.current.call(remotePeerId, myStream.current);
+        calls.current[remotePeerId] = call;
+        
+        call.on('stream', remoteStream => {
+          streams.current[remotePeerId] = remoteStream;
+          
+          // Update the participants list with the new stream
+          setParticipants(prevParticipants => 
+            prevParticipants.map(p => 
+              p.peerId === remotePeerId ? { ...p, hasStream: true } : p
+            )
+          );
+        });
+        
+        call.on('close', () => {
+          // Handle call closed
+          if (streams.current[remotePeerId]) {
+            delete streams.current[remotePeerId];
+            
+            setParticipants(prevParticipants => 
+              prevParticipants.map(p => 
+                p.peerId === remotePeerId ? { ...p, hasStream: false } : p
+              )
+            );
+          }
+        });
+      };
+
+      const joinRoom = () => {
+        if (!roomId || !displayName) return;
+        
+        // Set up audio for all connections
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(micStream => {
+            const audioTrack = micStream.getAudioTracks()[0];
+            myMicTrack.current = audioTrack;
+            
+            setIsInRoom(true);
+            setStatus(`Joined room: ${roomId}`);
+            
+            // Connect to the room using roomId as the first peer
+            connectToPeer(roomId);
+          })
+          .catch(err => {
+            setStatus(`Microphone error: ${err.message}`);
+            // Join anyway without mic
+            setIsInRoom(true);
+            setStatus(`Joined room: ${roomId} (no microphone)`);
+            connectToPeer(roomId);
+          });
+      };
+
+      const createRoom = () => {
+        if (!displayName) return;
+        
+        // Set up audio for all connections
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(micStream => {
+            const audioTrack = micStream.getAudioTracks()[0];
+            myMicTrack.current = audioTrack;
+            
+            setRoomId(myPeerId);
+            setIsInRoom(true);
+            setStatus(`Created room: ${myPeerId}`);
+          })
+          .catch(err => {
+            setStatus(`Microphone error: ${err.message}`);
+            // Create room anyway without mic
+            setRoomId(myPeerId);
+            setIsInRoom(true);
+            setStatus(`Created room: ${myPeerId} (no microphone)`);
+          });
       };
 
       const startScreenShare = async () => {
-        if (currentScreenSharerId && currentScreenSharerId !== myPeerId) {
-          setStatus(`Cannot share: ${currentScreenSharerId} is already sharing.`);
-          console.warn(`Attempted to share while ${currentScreenSharerId} is sharing.`);
-          return;
-        }
-        if (localScreenStream) {
-            setStatus("You are already sharing your screen.");
-            console.warn("Attempted to share screen while already sharing.");
-            return;
-        }
-
         try {
-          console.log("Attempting to get display media.");
-          // Some browsers might want audio to be explicitly true for tab audio, others might work with just video.
-          // { audio: true } can sometimes cause issues or prompts if not handled carefully.
-          // Let's try with `{ video: true, audio: { suppressLocalAudioPlayback: false } }` for broader compatibility
-          // or simply `{ video: true }` if tab audio isn't a primary goal initially.
-          const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true }); 
-          console.log("Got display media stream:", screenStream);
-          setLocalScreenStream(screenStream);
-          setCurrentScreenSharerId(myPeerId);
-          setDisplayedScreenStream(screenStream); 
-
-          screenStream.getVideoTracks()[0].onended = () => {
-            console.log('Screen sharing ended by browser control (e.g., "Stop sharing" button in browser UI).');
-            setStatus('Screen sharing ended by browser control.');
-            stopScreenShare(true); 
-          };
-          
-          connectedPeersRef.current.forEach((details, peerId) => {
-            if (details.dc && details.dc.open) {
-              console.log(`Calling ${peerId} with new screen stream.`);
-              const screenCall = peer.call(peerId, screenStream);
-              const calls = outgoingCallsRef.current.get(peerId) || {};
-              calls.screen = screenCall; // Store outgoing screen call
-              outgoingCallsRef.current.set(peerId, calls);
-            }
+          // Get screen stream
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true
           });
-
-          broadcastMessage({ type: 'SCREEN_SHARE_STARTED', sharerId: myPeerId });
-          setStatus('Screen sharing started.');
+          
+          // Create a combined stream with screen and audio
+          const combinedStream = new MediaStream();
+          
+          // Add all video tracks from screen
+          screenStream.getVideoTracks().forEach(track => {
+            combinedStream.addTrack(track);
+            
+            // Listen for the end of screen sharing
+            track.addEventListener('ended', () => {
+              stopScreenShare();
+            });
+          });
+          
+          // Add audio track if available
+          if (myMicTrack.current) {
+            combinedStream.addTrack(myMicTrack.current);
+          }
+          
+          // Save the stream
+          myStream.current = combinedStream;
+          
+          // Update status
+          setIsScreenSharing(true);
+          setStatus('Screen sharing started');
+          
+          // Notify all participants
+          Object.values(connections.current).forEach(conn => {
+            conn.send({
+              type: 'SCREEN_SHARING_STARTED',
+              peerId: myPeerId
+            });
+          });
+          
+          // Call all participants
+          participants.forEach(participant => {
+            callPeer(participant.peerId);
+          });
         } catch (e) {
-          setStatus('Error starting screen share: ' + e.message);
-          console.error('Screen share error', e);
-          if (localScreenStream) { 
-            localScreenStream.getTracks().forEach(t => t.stop());
-            setLocalScreenStream(null);
-          }
-          // If we had set ourselves as sharer but failed
-          if (currentScreenSharerId === myPeerId) {
-            setCurrentScreenSharerId(null);
-            setDisplayedScreenStream(null);
-          }
+          setStatus(`Error: ${e.message}`);
         }
       };
 
-      const stopScreenShare = (notifyPeers = true) => {
-        console.log(`Stopping screen share. Notify peers: ${notifyPeers}`);
-        if (!localScreenStream) {
-            console.warn("stopScreenShare called but no localScreenStream exists.");
-            return;
-        }
-
-        localScreenStream.getTracks().forEach(track => track.stop());
-        setLocalScreenStream(null);
-
-        outgoingCallsRef.current.forEach((calls, peerId) => {
-          if (calls.screen) {
-            console.log(`Closing outgoing screen call to ${peerId}`);
-            calls.screen.close();
-            calls.screen = null; 
+      const stopScreenShare = () => {
+        if (!myStream.current) return;
+        
+        // Stop all tracks
+        myStream.current.getTracks().forEach(track => {
+          if (track.kind === 'video') {
+            track.stop();
           }
         });
         
-        if (currentScreenSharerId === myPeerId) {
-          setCurrentScreenSharerId(null);
-          setDisplayedScreenStream(null); 
-          if (notifyPeers) {
-            broadcastMessage({ type: 'SCREEN_SHARE_STOPPED', sharerId: myPeerId });
-          }
+        // Remove video tracks from the stream
+        myStream.current = new MediaStream();
+        if (myMicTrack.current) {
+          myStream.current.addTrack(myMicTrack.current);
         }
-        setStatus('Screen sharing stopped.');
+        
+        // Update status
+        setIsScreenSharing(false);
+        setStatus('Screen sharing stopped');
+        
+        // Notify all participants
+        Object.values(connections.current).forEach(conn => {
+          conn.send({
+            type: 'SCREEN_SHARING_STOPPED',
+            peerId: myPeerId
+          });
+        });
+        
+        // Close existing calls and restart audio-only calls
+        participants.forEach(participant => {
+          if (calls.current[participant.peerId]) {
+            calls.current[participant.peerId].close();
+            delete calls.current[participant.peerId];
+          }
+          
+          // Call with audio only
+          if (myMicTrack.current) {
+            callPeer(participant.peerId);
+          }
+        });
       };
 
-      const toggleMyAudioMute = () => {
-        if (localAudioStream) {
-          const newMuteState = !isMyAudioMuted;
-          localAudioStream.getAudioTracks().forEach(track => track.enabled = !newMuteState);
-          setIsMyAudioMuted(newMuteState);
-          setStatus(newMuteState ? 'Your microphone is Muted' : 'Your microphone is Unmuted');
-          // Optional: broadcast mute status if other peers need to display it
-          // broadcastMessage({ type: 'MUTE_STATUS', peerId: myPeerId, muted: newMuteState });
+      const toggleMute = () => {
+        if (myMicTrack.current) {
+          const newState = !isAudioMuted;
+          myMicTrack.current.enabled = !newState;
+          setIsAudioMuted(newState);
         }
       };
 
-      useEffect(() => {
-        if (screenVideoRef.current) {
-          if (displayedScreenStream) {
-            console.log("Setting video srcObject to displayedScreenStream: ", displayedScreenStream);
-            screenVideoRef.current.srcObject = displayedScreenStream;
-            screenVideoRef.current.play().catch(e => console.warn("Screen video play failed:", e));
-          } else {
-            console.log("Clearing video srcObject.");
-            screenVideoRef.current.srcObject = null;
-          }
+      const leaveRoom = () => {
+        // Stop screen sharing if active
+        if (isScreenSharing) {
+          stopScreenShare();
         }
-      }, [displayedScreenStream]);
+        
+        // Close all connections
+        Object.values(connections.current).forEach(conn => conn.close());
+        connections.current = {};
+        
+        // Close all calls
+        Object.values(calls.current).forEach(call => call.close());
+        calls.current = {};
+        
+        // Clear streams
+        streams.current = {};
+        
+        // Reset state
+        setParticipants([]);
+        setIsInRoom(false);
+        setStatus('Left room');
+      };
 
-
-      return (
-        <div className="max-w-4xl w-full bg-white shadow-lg rounded p-6 space-y-4">
-          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite - Many-to-Many V23</h1>
-          
-          <div className="bg-gray-100 p-3 rounded text-sm space-y-1">
-            <p><strong>My Peer ID:</strong> <span className="font-mono">{myPeerId || 'Initializing...'}</span></p>
-            <p><strong>Status:</strong> {status}</p>
-          </div>
-
-          <div className="flex space-x-2 items-center">
-            <input
-              className="border p-2 flex-grow rounded font-mono"
-              placeholder="Enter Peer ID to Connect"
-              value={targetPeerIdInput}
-              onChange={e => setTargetPeerIdInput(e.target.value)}
-              disabled={!peer || !myPeerId}
-            />
-            <button
-              onClick={handleConnectToPeer}
-              className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded font-semibold disabled:bg-gray-400"
-              disabled={!peer || !myPeerId || !targetPeerIdInput.trim()}
-            >
-              Connect
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            <button
-              onClick={toggleMyAudioMute}
-              className={`w-full py-2 px-4 rounded font-semibold flex items-center justify-center space-x-2 ${
-                isMyAudioMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
-              } text-white disabled:bg-gray-400`}
-              disabled={!localAudioStream}
-            >
-              <span>{isMyAudioMuted ? 'Unmute My Mic' : 'Mute My Mic'}</span>
-            </button>
-
-            {!localScreenStream && (!currentScreenSharerId || currentScreenSharerId === myPeerId) && (
-              <button
-                onClick={startScreenShare}
-                className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded w-full font-semibold disabled:bg-gray-400"
-                disabled={!!currentScreenSharerId && currentScreenSharerId !== myPeerId} 
-              >
-                Share Screen
-              </button>
-            )}
-            {localScreenStream && currentScreenSharerId === myPeerId && (
-              <button
-                onClick={() => stopScreenShare(true)}
-                className="bg-orange-600 hover:bg-orange-700 text-white py-2 px-4 rounded w-full font-semibold"
-              >
-                Stop Sharing Screen
-              </button>
-            )}
-            {currentScreenSharerId && currentScreenSharerId !== myPeerId && (
-                <p className="text-center text-gray-700 p-2 bg-yellow-100 rounded">
-                    Screen is being shared by <span className="font-mono">{currentScreenSharerId}</span>.
-                </p>
-            )}
-          </div>
-          
-          <div>
-            <h3 className="text-lg font-semibold mb-2">Shared Screen</h3>
-            { (!displayedScreenStream && !currentScreenSharerId) && <div className="text-gray-500 p-4 text-center border rounded bg-gray-50">No screen is being shared currently.</div>}
-            { currentScreenSharerId && !displayedScreenStream && currentScreenSharerId !== myPeerId && <div className="text-gray-500 p-4 text-center border rounded bg-gray-50">Waiting for screen stream from <span className="font-mono">{currentScreenSharerId}</span>...</div>}
+      // Render a video element for a participant
+      const renderParticipantVideo = (participant) => {
+        const stream = streams.current[participant.peerId];
+        
+        if (!stream) return null;
+        
+        return (
+          <div key={participant.peerId} className="mb-4">
+            <h3 className="text-sm font-semibold mb-1">
+              {participant.displayName} {participant.isScreenSharing ? '(Sharing Screen)' : ''}
+            </h3>
             <video
-              ref={screenVideoRef}
-              className="w-full h-auto max-h-[60vh] rounded shadow-lg bg-black"
+              className="w-full h-auto max-h-40 rounded shadow-lg"
               autoPlay
               playsInline
-              // `muted` attribute for video tag is for its own audio track, not related to mic.
-              // Screen shares might have audio; if you want to control that, you'd need separate logic.
-              // For simplicity, we assume screen share audio (if present) plays.
-              // If you want to mute screen share audio by default: `muted`
+              ref={el => {
+                if (el && stream !== el.srcObject) {
+                  el.srcObject = stream;
+                }
+              }}
             />
           </div>
+        );
+      };
 
-          <div>
-            <h3 className="text-lg font-semibold mb-1">Connected Peers ({connectedPeersUI.length}):</h3>
-            {connectedPeersUI.length === 0 && <p className="text-sm text-gray-500">No peers connected.</p>}
-            <ul className="list-disc pl-5 text-sm space-y-1">
-              {connectedPeersUI.map(pid => {
-                const details = connectedPeersRef.current.get(pid);
-                let peerStatusInfo = [];
-                if (details?.audioStream) peerStatusInfo.push("Audio ✓");
-                else if(details?.dc?.open) peerStatusInfo.push("Audio (connecting...)");
-
-                if (currentScreenSharerId === pid) {
-                    if (details?.screenStream) peerStatusInfo.push("Sharing Screen ✓");
-                    else peerStatusInfo.push("Sharing Screen (connecting...)");
-                }
-
-                return (
-                  <li key={pid} className="text-gray-700">
-                    <span className="font-mono">{pid}</span> {peerStatusInfo.length > 0 ? `(${peerStatusInfo.join(', ')})` : (details?.dc?.open ? '(Connected)' : '(Attempting...)')}
-                  </li>
-                );
-              })}
-            </ul>
+      return (
+        <div className="max-w-md w-full bg-white shadow-lg rounded p-6">
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V24 - Many to Many</h1>
+          
+          <div className="bg-gray-100 p-3 rounded mb-4 text-sm">
+            <p><strong>Status:</strong> {status}</p>
+            {myPeerId && <p><strong>Your ID:</strong> {myPeerId}</p>}
+            {isInRoom && roomId && <p><strong>Room ID:</strong> {roomId}</p>}
           </div>
+          
+          {!isInRoom ? (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Display Name</label>
+                <input
+                  className="border p-2 w-full rounded"
+                  placeholder="Enter your name"
+                  value={displayName}
+                  onChange={e => setDisplayName(e.target.value)}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-1">Room ID (leave empty to create new room)</label>
+                <input
+                  className="border p-2 w-full rounded"
+                  placeholder="Enter room ID or leave empty"
+                  value={roomId}
+                  onChange={e => setRoomId(e.target.value)}
+                />
+              </div>
+              
+              <div className="flex space-x-2">
+                <button
+                  onClick={joinRoom}
+                  disabled={!roomId || !displayName || !myPeerId}
+                  className={`flex-1 py-2 px-4 rounded font-semibold ${
+                    roomId && displayName && myPeerId
+                      ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  Join Room
+                </button>
+                
+                <button
+                  onClick={createRoom}
+                  disabled={!displayName || !myPeerId}
+                  className={`flex-1 py-2 px-4 rounded font-semibold ${
+                    displayName && myPeerId
+                      ? 'bg-green-600 hover:bg-green-700 text-white'
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  Create Room
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex space-x-2">
+                {!isScreenSharing ? (
+                  <button
+                    onClick={startScreenShare}
+                    className="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded font-semibold"
+                  >
+                    Share My Screen
+                  </button>
+                ) : (
+                  <button
+                    onClick={stopScreenShare}
+                    className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded font-semibold"
+                  >
+                    Stop Sharing
+                  </button>
+                )}
+                
+                <button
+                  onClick={toggleMute}
+                  className={`w-12 py-2 rounded font-semibold ${
+                    isAudioMuted
+                      ? 'bg-gray-600 hover:bg-gray-700'
+                      : 'bg-green-600 hover:bg-green-700'
+                  } text-white flex items-center justify-center`}
+                >
+                  {isAudioMuted ? '🔇' : '🔊'}
+                </button>
+              </div>
+              
+              <div className="max-h-96 overflow-y-auto space-y-4">
+                <h2 className="text-lg font-semibold">Participants ({participants.length})</h2>
+                
+                {participants.length === 0 && (
+                  <p className="text-gray-500 text-sm">No other participants yet. Share your Room ID: {roomId}</p>
+                )}
+                
+                {participants.map(renderParticipantVideo)}
+              </div>
+              
+              <button
+                onClick={leaveRoom}
+                className="w-full bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded font-semibold"
+              >
+                Leave Room
+              </button>
+            </div>
+          )}
         </div>
       );
     }
