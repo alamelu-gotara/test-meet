@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Screen Share V17</title>
+  <title>SyncLite Screen Share V18</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -25,15 +25,17 @@
       const [peer, setPeer] = useState(null);
       const [stream, setStream] = useState(null);
       const [remoteStream, setRemoteStream] = useState(null);
-      const [muted, setMuted] = useState(false);
-      const [micTrack, setMicTrack] = useState(null);
-
+      const [audioMuted, setAudioMuted] = useState(false);
+      const [participantMuted, setParticipantMuted] = useState(false);
       const videoRef = useRef(null);
       const connRef = useRef(null);
       const callRef = useRef(null);
+      const micTrackRef = useRef(null);
 
       useEffect(() => {
         const p = new Peer();
+        setPeer(p);
+
         p.on('open', id => {
           setPeerId(id);
           setStatus('Ready');
@@ -41,20 +43,22 @@
 
         p.on('call', async call => {
           if (!isHost) {
-            // Viewer receives host stream
-            call.answer(); // no local stream
+            call.answer();
             call.on('stream', remote => {
               setRemoteStream(remote);
-              setStatus('Receiving host screen & mic...');
+              setStatus('Receiving host screen & audio...');
             });
           } else {
-            // Host receives participant mic
             call.answer();
-            call.on('stream', remoteMic => {
+            call.on('stream', viewerMic => {
               const audio = new Audio();
-              audio.srcObject = remoteMic;
-              audio.play();
-              setStatus('Receiving participant audio...');
+              audio.srcObject = viewerMic;
+              audio.autoplay = true;
+              audio.muted = false;
+              audio.play().catch(() => {
+                console.warn('Autoplay blocked, user gesture needed');
+              });
+              setStatus('Receiving viewer audio');
             });
           }
         });
@@ -65,38 +69,46 @@
             if (isHost && stream) {
               const call = p.call(conn.peer, stream);
               callRef.current = call;
-              setStatus('Connected to participant');
+              setStatus('Connected to viewer');
             }
           });
         });
-
-        setPeer(p);
 
         return () => {
           if (stream) stream.getTracks().forEach(t => t.stop());
           p.destroy();
         };
-      }, [isHost, stream]);
+      }, [isHost]);
 
       useEffect(() => {
-        if (!isHost && remoteStream && videoRef.current) {
+        if (remoteStream && videoRef.current && !isHost) {
           videoRef.current.srcObject = remoteStream;
+          videoRef.current.play().catch(() => {
+            console.warn('Autoplay blocked. Will try on user interaction.');
+          });
         }
       }, [remoteStream]);
 
       const startScreenShare = async () => {
         try {
-          const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const micTrackLocal = micStream.getAudioTracks()[0];
-          setMicTrack(micTrackLocal);
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false
+          });
 
-          const combined = new MediaStream([
+          const micStream = await navigator.mediaDevices.getUserMedia({
+            audio: true
+          });
+
+          const micTrack = micStream.getAudioTracks()[0];
+          micTrackRef.current = micTrack;
+
+          const combinedStream = new MediaStream([
             ...screenStream.getVideoTracks(),
-            micTrackLocal
+            micTrack
           ]);
 
-          setStream(combined);
+          setStream(combinedStream);
           setStatus('Screen + mic sharing started');
 
           screenStream.getVideoTracks()[0].addEventListener('ended', () => {
@@ -105,9 +117,10 @@
           });
 
           if (peer && connRef.current) {
-            const call = peer.call(connRef.current.peer, combined);
+            const call = peer.call(connRef.current.peer, combinedStream);
             callRef.current = call;
           }
+
         } catch (e) {
           setStatus('Error: ' + e.message);
         }
@@ -115,13 +128,14 @@
 
       const connectToHost = async () => {
         if (!peer || !remoteId) return;
+
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const micTrack = micStream.getAudioTracks()[0];
+        micTrackRef.current = micTrack;
+
         const conn = peer.connect(remoteId);
         connRef.current = conn;
         setStatus('Connecting to host...');
-
-        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const micTrackLocal = micStream.getAudioTracks()[0];
-        setMicTrack(micTrackLocal);
 
         conn.on('open', () => {
           const call = peer.call(remoteId, micStream);
@@ -131,15 +145,25 @@
       };
 
       const toggleMute = () => {
-        if (micTrack) {
-          micTrack.enabled = !micTrack.enabled;
-          setMuted(!micTrack.enabled);
+        if (micTrackRef.current) {
+          micTrackRef.current.enabled = !micTrackRef.current.enabled;
+          setAudioMuted(!micTrackRef.current.enabled);
+        }
+      };
+
+      const toggleParticipantMute = () => {
+        if (videoRef.current?.srcObject) {
+          const audioTracks = videoRef.current.srcObject.getAudioTracks();
+          audioTracks.forEach(track => {
+            track.enabled = !track.enabled;
+          });
+          setParticipantMuted(!audioTracks[0]?.enabled);
         }
       };
 
       return (
-        <div className="max-w-lg w-full bg-white shadow-lg rounded p-6">
-          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V17</h1>
+        <div className="max-w-md w-full bg-white shadow-lg rounded p-6">
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V18</h1>
 
           <div className="flex items-center space-x-2 mb-4">
             <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
@@ -177,36 +201,41 @@
             </button>
           )}
 
-          {stream && isHost && (
-            <div className="mt-4 text-center text-sm text-gray-700">
-              ✅ Your screen is currently being shared.
-            </div>
-          )}
-
-          {(stream || remoteStream) && !isHost && (
+          {(stream || remoteStream) && (
             <div className="mt-4">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
-                muted={false}
-                controls
-                className="w-full rounded shadow border-4 border-purple-500"
-                style={{ minHeight: 400 }}
+                muted={isHost}
+                controls={false}
+                onClick={() => videoRef.current.play()}
+                className="w-full rounded shadow"
+                style={{ minHeight: '300px' }}
               />
+              {isHost && <p className="text-xs text-center mt-2">Your screen is currently being shared.</p>}
             </div>
           )}
 
-          {(micTrack && (
-            <button
-              onClick={toggleMute}
-              className={`mt-4 w-full flex items-center justify-center gap-2 py-2 px-4 rounded font-semibold text-white ${
-                muted ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
-              }`}
-            >
-              {muted ? '🔇 Unmute Audio' : '🎤 Mute Audio'}
-            </button>
-          ))}
+          {(stream || remoteStream) && (
+            <div className="mt-4 flex justify-around">
+              {isHost ? (
+                <button
+                  onClick={toggleMute}
+                  className="bg-red-500 hover:bg-red-600 text-white py-1 px-4 rounded text-sm flex items-center"
+                >
+                  {audioMuted ? '🔇 Unmute Mic' : '🎤 Mute Mic'}
+                </button>
+              ) : (
+                <button
+                  onClick={toggleParticipantMute}
+                  className="bg-yellow-500 hover:bg-yellow-600 text-white py-1 px-4 rounded text-sm flex items-center"
+                >
+                  {participantMuted ? '🔈 Unmute Host' : '🔇 Mute Host'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       );
     }
