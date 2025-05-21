@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Screen Share V12</title>
+  <title>SyncLite Screen Share V13</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -23,9 +23,11 @@
       const [remoteId, setRemoteId] = useState('');
       const [status, setStatus] = useState('Initializing...');
       const [peer, setPeer] = useState(null);
-      const [stream, setStream] = useState(null); // host stream
-      const [remoteStream, setRemoteStream] = useState(null); // stream for video element
+      const [stream, setStream] = useState(null);
+      const [remoteStream, setRemoteStream] = useState(null);
       const videoRef = useRef(null);
+      const connRef = useRef(null);
+      const callRef = useRef(null);
 
       useEffect(() => {
         const p = new Peer();
@@ -34,31 +36,35 @@
           setStatus('Ready');
         });
 
+        // Handle incoming calls
         p.on('call', async call => {
-          if (isHost) {
-            // Host receiving viewer mic audio
-            call.answer(); // no stream needed from host
-            call.on('stream', viewerAudioStream => {
-              // Play viewer's mic
-              const audio = new Audio();
-              audio.srcObject = viewerAudioStream;
-              audio.play();
-              setStatus('Receiving viewer audio');
+          if (!isHost) {
+            // Viewer receives host's screen+mic
+            call.answer();
+            call.on('stream', remote => {
+              setRemoteStream(remote);
+              setStatus('Receiving host screen & audio...');
             });
           } else {
-            // Viewer receiving host's screen+mic
-            call.answer(); // viewer answers call
-            call.on('stream', hostStream => {
-              setRemoteStream(hostStream);
-              setStatus('Receiving screen...');
+            // Host receives viewer's mic
+            call.answer(); // No stream sent from host in this call
+            call.on('stream', viewerMic => {
+              const audio = new Audio();
+              audio.srcObject = viewerMic;
+              audio.autoplay = true;
+              document.body.appendChild(audio); // Attach to DOM to ensure playback
+              setStatus('Receiving viewer audio');
             });
           }
         });
 
-        p.on('connection', async conn => {
-          conn.on('open', async () => {
+        // Handle data connection
+        p.on('connection', conn => {
+          connRef.current = conn;
+          conn.on('open', () => {
             if (isHost && stream) {
-              const call = p.call(conn.peer, stream); // send screen+mic to viewer
+              const call = p.call(conn.peer, stream);
+              callRef.current = call;
               setStatus('Connected to viewer');
             }
           });
@@ -73,28 +79,41 @@
       }, [isHost, stream]);
 
       useEffect(() => {
-        if (videoRef.current && remoteStream && !isHost) {
+        if (remoteStream && videoRef.current && !isHost) {
           videoRef.current.srcObject = remoteStream;
         }
-      }, [remoteStream]);
+      }, [remoteStream, stream]);
 
       const startScreenShare = async () => {
         try {
-          const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          
-          const combined = new MediaStream([
-            ...displayStream.getVideoTracks(),
-            ...audioStream.getAudioTracks()
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false
+          });
+
+          const micStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false
+          });
+
+          const combinedStream = new MediaStream([
+            ...screenStream.getVideoTracks(),
+            ...micStream.getAudioTracks()
           ]);
 
-          setStream(combined);
-          setStatus('Screen sharing started');
+          setStream(combinedStream);
+          setStatus('Screen + mic sharing started');
 
-          displayStream.getVideoTracks()[0].addEventListener('ended', () => {
+          screenStream.getVideoTracks()[0].addEventListener('ended', () => {
             setStream(null);
             setStatus('Screen sharing ended');
           });
+
+          if (peer && connRef.current) {
+            const call = peer.call(connRef.current.peer, combinedStream);
+            callRef.current = call;
+          }
+
         } catch (e) {
           setStatus('Error: ' + e.message);
         }
@@ -102,34 +121,34 @@
 
       const connectToHost = async () => {
         if (!peer || !remoteId) return;
-
         const conn = peer.connect(remoteId);
+        connRef.current = conn;
+        setStatus('Connecting to host...');
 
-        // Send mic to host
-        try {
-          const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-          peer.call(remoteId, mic);
-          setStatus('Sent mic to host');
-        } catch (e) {
-          setStatus('Mic permission error: ' + e.message);
-        }
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        conn.on('open', () => {
+          const call = peer.call(remoteId, micStream);
+          callRef.current = call;
+          setStatus('Connected to host');
+        });
       };
 
       return (
         <div className="max-w-md w-full bg-white shadow-lg rounded p-6">
-          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V12</h1>
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V13</h1>
 
           <div className="flex items-center space-x-2 mb-4">
             <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
             <label htmlFor="hostToggle" className="text-sm">I am the Host</label>
           </div>
 
-          {isHost && stream && (
-            <div className="bg-yellow-100 p-3 rounded mb-4 text-sm">
+          <div className="bg-gray-100 p-3 rounded mb-4 text-sm">
+            {isHost && stream && (
               <p><strong>Peer ID:</strong> {peerId}</p>
-              <p><strong>Status:</strong> {status}</p>
-            </div>
-          )}
+            )}
+            <p><strong>Status:</strong> {status}</p>
+          </div>
 
           {!isHost && (
             <div className="mb-4 space-y-2">
@@ -153,17 +172,17 @@
               onClick={startScreenShare}
               className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold"
             >
-              Share Screen + Mic
+              Share Screen
             </button>
           )}
 
-          {remoteStream && !isHost && (
+          {(stream || remoteStream) && (
             <div className="mt-4">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
-                muted
+                muted={isHost}
                 controls
                 className="w-full rounded shadow"
                 style={{ minHeight: 300 }}
