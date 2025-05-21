@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Screen Share V36</title>
+  <title>SyncLite Many-to-Many Screen Share - V37</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -11,319 +11,185 @@
   <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
-<body class="bg-gray-100">
-  <div id="root" class="min-h-screen flex flex-col items-center p-4"></div>
+<body>
+  <div id="root" class="min-h-screen bg-gray-900 flex flex-col items-center p-4"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useRef, useEffect } = React;
 
     function App() {
+      // State
       const [isHost, setIsHost] = useState(false);
       const [peerId, setPeerId] = useState('');
       const [remoteId, setRemoteId] = useState('');
       const [status, setStatus] = useState('Initializing...');
-      const [peer, setPeer] = useState(null);
-      const [stream, setStream] = useState(null);
-      const [remoteStream, setRemoteStream] = useState(null);
+      const [stream, setStream] = useState(null); // Host's local stream
+      const [remoteStream, setRemoteStream] = useState(null); // Viewer: host's stream
       const [isAudioMuted, setIsAudioMuted] = useState(false);
-      const [participants, setParticipants] = useState([]);
-      const [isTheaterMode, setIsTheaterMode] = useState(true);
-      const videoRef = useRef(null);
-      const connectionsRef = useRef(new Map());
-      const callsRef = useRef(new Map());
-      const localMicTrack = useRef(null);
+      const [participantMicMuted, setParticipantMicMuted] = useState(false);
 
-      // Initialize Peer connection
+      // Refs
+      const peerRef = useRef(null);
+      const connectionsRef = useRef([]); // All DataConnections
+      const callsRef = useRef([]); // All MediaConnections
+      const audioElementsRef = useRef([]); // Host: array of audio elements for each viewer
+      const videoRef = useRef(null); // Viewer: for host's video
+      const localMicTrack = useRef(null);
+      const participantMicTrack = useRef(null);
+
+      // PeerJS setup
       useEffect(() => {
-        const p = new Peer();
-        p.on('open', id => {
+        const peer = new Peer();
+        peerRef.current = peer;
+
+        peer.on('open', id => {
           setPeerId(id);
           setStatus('Ready');
         });
 
-        // Handle incoming calls
-        p.on('call', async call => {
-          try {
-            // Store caller information
-            const callerId = call.peer;
-            
-            if (isHost) {
-              // Host accepting participant mic/video
-              call.answer(stream);
-              call.on('stream', participantStream => {
-                setParticipants(prev => {
-                  // Check if this participant already exists
-                  if (!prev.some(p => p.id === callerId)) {
-                    return [...prev, {
-                      id: callerId,
-                      stream: participantStream,
-                      isMuted: false
-                    }];
-                  }
-                  return prev;
-                });
-                setStatus(`Connected with participant ${callerId.substring(0, 5)}...`);
-              });
-            } else {
-              // Participant receiving host stream
-              call.answer(localMicTrack.current ? new MediaStream([localMicTrack.current]) : null);
-              call.on('stream', hostStream => {
-                setRemoteStream(hostStream);
-                setStatus('Receiving host screen & audio...');
-              });
-            }
-            
-            // Store the call reference for later use
-            callsRef.current.set(callerId, call);
-          } catch (err) {
-            setStatus(`Call error: ${err.message}`);
+        // Handle incoming calls (host: from viewers, viewer: from host)
+        peer.on('call', call => {
+          if (!isHost) {
+            // Viewer receives host's screen+audio
+            call.answer();
+            call.on('stream', remote => {
+              setRemoteStream(remote);
+              setStatus('Receiving host screen & audio...');
+            });
+          } else {
+            // Host receives viewer's mic audio
+            call.answer();
+            call.on('stream', viewerMic => {
+              // Create and play a new audio element for this viewer
+              const audio = new window.Audio();
+              audio.srcObject = viewerMic;
+              audio.autoplay = true;
+              audio.playsInline = true;
+              document.body.appendChild(audio); // Keep it alive
+              audioElementsRef.current.push(audio);
+              setStatus('Receiving participant audio');
+            });
+            callsRef.current.push(call);
           }
         });
 
-        // Handle data connections
-        p.on('connection', conn => {
-          const connId = conn.peer;
-          connectionsRef.current.set(connId, conn);
-          
+        // Handle incoming data connections
+        peer.on('connection', conn => {
+          connectionsRef.current.push(conn);
           conn.on('open', () => {
-            setStatus(`Connected with ${connId.substring(0, 5)}...`);
-            
-            // Notify all participants of new connection if host
-            if (isHost) {
-              // Share the list of all connected peers with everyone
-              const peerList = Array.from(connectionsRef.current.keys());
-              
-              // Send updated peer list to all connections
-              connectionsRef.current.forEach(connection => {
-                if (connection.open) {
-                  connection.send({
-                    type: 'peer-list',
-                    peers: peerList.filter(id => id !== connection.peer)
-                  });
-                }
-              });
-            }
-          });
-          
-          conn.on('data', data => {
-            // Handle incoming data messages
-            if (data.type === 'mute-status') {
-              // Update participant mute status
-              setParticipants(prev => 
-                prev.map(p => p.id === connId ? {...p, isMuted: data.isMuted} : p)
-              );
-            }
-          });
-          
-          conn.on('close', () => {
-            // Remove connection and update participants
-            connectionsRef.current.delete(connId);
-            setParticipants(prev => prev.filter(p => p.id !== connId));
-            
-            // Notify remaining participants if host
-            if (isHost) {
-              const peerList = Array.from(connectionsRef.current.keys());
-              connectionsRef.current.forEach(connection => {
-                if (connection.open) {
-                  connection.send({
-                    type: 'peer-list',
-                    peers: peerList.filter(id => id !== connection.peer)
-                  });
-                }
-              });
+            setStatus('Participant connected');
+            // When host is sharing, call the new participant
+            if (isHost && stream) {
+              const call = peer.call(conn.peer, stream);
+              callsRef.current.push(call);
             }
           });
         });
 
-        setPeer(p);
-
         return () => {
+          // Cleanup
           if (stream) stream.getTracks().forEach(t => t.stop());
-          p.destroy();
+          audioElementsRef.current.forEach(audio => audio.remove());
+          peer.destroy();
         };
-      }, [isHost]);
+      }, [isHost, stream]);
 
-      // Update video element when remote stream changes
+      // Viewer: set video src
       useEffect(() => {
         if (remoteStream && videoRef.current && !isHost) {
           videoRef.current.srcObject = remoteStream;
-          videoRef.current.play().catch(e => console.error("Error playing video:", e));
         }
       }, [remoteStream, isHost]);
 
-      // Start screen sharing (host)
+      // Host: share screen + mic
       const startScreenShare = async () => {
         try {
-          // Get screen stream
           const screenStream = await navigator.mediaDevices.getDisplayMedia({
             video: true,
-            audio: true // Try to capture system audio if supported
+            audio: false
           });
-
-          // Get microphone stream
           const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           const micTrack = micStream.getAudioTracks()[0];
           localMicTrack.current = micTrack;
 
-          // Combine screen and microphone into one stream
+          // Combine video and mic
           const combinedStream = new MediaStream([
             ...screenStream.getVideoTracks(),
             micTrack
           ]);
-
           setStream(combinedStream);
           setStatus('Screen + mic sharing started');
 
-          // Listen for when screen sharing is stopped by the user
+          // Stop sharing callback
           screenStream.getVideoTracks()[0].addEventListener('ended', () => {
             setStream(null);
             setStatus('Screen sharing ended');
-            
-            // Close all calls
-            callsRef.current.forEach(call => call.close());
-            callsRef.current.clear();
           });
 
-          // Call all connected participants to send them the stream
-          connectionsRef.current.forEach((conn, participantId) => {
-            const call = peer.call(participantId, combinedStream);
-            callsRef.current.set(participantId, call);
-          });
+          // Call all currently connected participants
+          if (peerRef.current) {
+            connectionsRef.current.forEach(conn => {
+              const call = peerRef.current.call(conn.peer, combinedStream);
+              callsRef.current.push(call);
+            });
+          }
         } catch (e) {
           setStatus('Error: ' + e.message);
         }
       };
 
-      // Connect to host (participant)
-      const connectToHost = async () => {
-        if (!peer || !remoteId) return;
-        
-        try {
-          // Create data connection
-          const conn = peer.connect(remoteId);
-          connectionsRef.current.set(remoteId, conn);
-          setStatus('Connecting to host...');
-
-          // Setup microphone for two-way audio
-          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const micTrack = micStream.getAudioTracks()[0];
-          localMicTrack.current = micTrack;
-          
-          conn.on('open', () => {
-            setStatus('Connected to host');
-            
-            // Listen for host data messages
-            conn.on('data', data => {
-              if (data.type === 'peer-list') {
-                // Connect to other participants for many-to-many
-                data.peers.forEach(participantId => {
-                  if (!connectionsRef.current.has(participantId)) {
-                    const pConn = peer.connect(participantId);
-                    connectionsRef.current.set(participantId, pConn);
-                    
-                    pConn.on('open', () => {
-                      // Establish call with this participant
-                      const pCall = peer.call(participantId, new MediaStream([micTrack]));
-                      callsRef.current.set(participantId, pCall);
-                      
-                      pCall.on('stream', pStream => {
-                        setParticipants(prev => {
-                          if (!prev.some(p => p.id === participantId)) {
-                            return [...prev, {
-                              id: participantId,
-                              stream: pStream,
-                              isMuted: false
-                            }];
-                          }
-                          return prev;
-                        });
-                      });
-                    });
-                  }
-                });
-              }
-            });
-            
-            // Call the host to establish video/audio connection
-            const call = peer.call(remoteId, new MediaStream([micTrack]));
-            callsRef.current.set(remoteId, call);
-          });
-        } catch (e) {
-          setStatus('Connection error: ' + e.message);
-        }
-      };
-
-      // Toggle local microphone mute
-      const toggleMute = () => {
+      // Host: mute/unmute mic
+      const toggleHostMute = () => {
         if (localMicTrack.current) {
           const newState = !isAudioMuted;
           localMicTrack.current.enabled = !newState;
           setIsAudioMuted(newState);
-          
-          // Notify connected peers about mute status
-          connectionsRef.current.forEach(conn => {
-            if (conn.open) {
-              conn.send({
-                type: 'mute-status',
-                isMuted: newState
-              });
-            }
-          });
         }
       };
 
-      // Toggle participant microphone mute
-      const toggleParticipantMute = (participantId) => {
-        setParticipants(prev => 
-          prev.map(p => {
-            if (p.id === participantId) {
-              const tracks = p.stream.getAudioTracks();
-              if (tracks.length > 0) {
-                tracks[0].enabled = p.isMuted; // Toggle the state
-              }
-              return {...p, isMuted: !p.isMuted};
-            }
-            return p;
-          })
-        );
+      // Viewer: mute/unmute mic
+      const toggleParticipantMute = () => {
+        if (participantMicTrack.current) {
+          const newState = !participantMicMuted;
+          participantMicTrack.current.enabled = !newState;
+          setParticipantMicMuted(newState);
+        }
       };
 
-      // Toggle theater mode
-      const toggleTheaterMode = () => {
-        setIsTheaterMode(!isTheaterMode);
+      // Viewer: connect to host
+      const connectToHost = async () => {
+        if (!peerRef.current || !remoteId) return;
+        const conn = peerRef.current.connect(remoteId);
+        setStatus('Connecting to host...');
+
+        // Get mic stream
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const micTrack = micStream.getAudioTracks()[0];
+        participantMicTrack.current = micTrack;
+
+        conn.on('open', () => {
+          // Call host with mic stream
+          const call = peerRef.current.call(remoteId, micStream);
+          setStatus('Connected to host');
+        });
       };
 
+      // UI
       return (
-        <div className={`${isTheaterMode && remoteStream ? 'w-full max-w-6xl' : 'max-w-md w-full'} bg-white shadow-lg rounded p-6`}>
-          <div className="flex justify-between items-center mb-4">
-            <h1 className="text-2xl font-bold text-purple-600">SyncLite V36</h1>
-            {remoteStream && (
-              <button 
-                onClick={toggleTheaterMode}
-                className="text-sm bg-gray-200 hover:bg-gray-300 py-1 px-3 rounded"
-              >
-                {isTheaterMode ? 'Exit Theater Mode' : 'Enter Theater Mode'}
-              </button>
-            )}
-          </div>
+        <div className="w-full max-w-4xl mx-auto bg-gray-800 shadow-lg rounded p-6 mt-8">
+          <h1 className="text-3xl font-bold text-purple-400 mb-4 text-center">SyncLite Many-to-Many Screen Share - V37</h1>
 
           <div className="flex items-center space-x-2 mb-4">
-            <input 
-              type="checkbox" 
-              id="hostToggle" 
-              checked={isHost} 
-              onChange={() => setIsHost(!isHost)} 
-              className="h-4 w-4"
-            />
-            <label htmlFor="hostToggle" className="text-sm">I am the Host</label>
+            <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
+            <label htmlFor="hostToggle" className="text-lg text-white">I am the Host</label>
           </div>
 
-          <div className="bg-gray-100 p-3 rounded mb-4 text-sm space-y-1">
-            {isHost && <p><strong>Your ID:</strong> {peerId}</p>}
+          <div className="bg-gray-700 p-3 rounded mb-4 text-sm space-y-1 text-white">
+            {isHost && <p><strong>Peer ID:</strong> {peerId}</p>}
             <p><strong>Status:</strong> {status}</p>
           </div>
 
-          {!isHost && !remoteStream && (
+          {!isHost && (
             <div className="mb-4 space-y-2">
               <input
                 className="border p-2 w-full rounded"
@@ -349,73 +215,44 @@
             </button>
           )}
 
-          {/* Microphone control */}
-          {(isHost && stream) || (!isHost && remoteStream) ? (
+          {isHost && stream && (
             <div className="my-4">
+              <p className="text-center text-gray-300 mb-2">Your screen is currently being shared with all participants.</p>
               <button
-                onClick={toggleMute}
-                className={`w-full py-2 px-4 rounded font-semibold ${
+                onClick={toggleHostMute}
+                className={`w-full py-2 px-4 rounded font-semibold flex items-center justify-center space-x-2 ${
                   isAudioMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
                 } text-white`}
               >
-                {isAudioMuted ? 'Unmute My Mic' : 'Mute My Mic'}
+                <span>{isAudioMuted ? 'Unmute My Mic' : 'Mute My Mic'}</span>
               </button>
             </div>
-          ) : null}
+          )}
 
-          {/* Video display for participants */}
+          {/* Theatre mode for viewers */}
           {!isHost && remoteStream && (
-            <div className="mt-4">
+            <div className="mt-6 flex justify-center items-center bg-black rounded-lg p-4">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
-                className={`w-full h-auto ${isTheaterMode ? 'max-h-[80vh]' : 'max-h-[60vh]'} rounded shadow-lg`}
+                onClick={() => videoRef.current?.play()}
+                className="w-full max-w-4xl h-auto max-h-[80vh] rounded shadow-lg"
                 controls
               />
             </div>
           )}
 
-          {/* Participants list */}
-          {participants.length > 0 && (
-            <div className="mt-4">
-              <h3 className="font-semibold mb-2">Participants:</h3>
-              <div className="space-y-2">
-                {participants.map(participant => (
-                  <div key={participant.id} className="flex items-center justify-between bg-gray-50 p-2 rounded">
-                    <div className="text-sm">
-                      Participant: {participant.id.substring(0, 5)}...
-                      <span className={`ml-2 text-xs ${participant.isMuted ? 'text-red-500' : 'text-green-500'}`}>
-                        {participant.isMuted ? '(Muted)' : '(Unmuted)'}
-                      </span>
-                    </div>
-                    
-                    {isHost && (
-                      <button
-                        onClick={() => toggleParticipantMute(participant.id)}
-                        className={`text-xs px-2 py-1 rounded ${
-                          participant.isMuted ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600'
-                        } text-white`}
-                      >
-                        {participant.isMuted ? 'Unmute' : 'Mute'}
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
+          {!isHost && remoteStream && (
+            <button
+              onClick={toggleParticipantMute}
+              className={`w-full mt-4 py-2 px-4 rounded font-semibold flex items-center justify-center space-x-2 ${
+                participantMicMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
+              } text-white`}
+            >
+              <span>{participantMicMuted ? 'Unmute My Mic' : 'Mute My Mic'}</span>
+            </button>
           )}
-
-          {/* Audio elements for participants (hidden) */}
-          {participants.map(participant => (
-            <audio 
-              key={`audio-${participant.id}`}
-              autoPlay 
-              playsInline
-              srcObject={participant.stream}
-              style={{display: 'none'}}
-            />
-          ))}
         </div>
       );
     }
