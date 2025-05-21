@@ -2,152 +2,338 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>SyncLite - V34 - Many-to-Many</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SyncLite V35 - Many-to-Many + Theatre Screen</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
-<body class="bg-gray-100 p-4">
-  <div class="max-w-3xl mx-auto space-y-4">
-    <h1 class="text-2xl font-bold text-center text-purple-600">SyncLite – V34 - Many-to-Many Share</h1>
+<body>
+  <div id="root" class="min-h-screen bg-gray-100 flex flex-col items-center p-4"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
 
-    <div class="space-y-2">
-      <label class="block font-medium">Your Peer ID:</label>
-      <input id="my-id" class="w-full p-2 border rounded" readonly />
-    </div>
+    function App() {
+      const [peerId, setPeerId] = useState('');
+      const [peer, setPeer] = useState(null);
 
-    <div class="space-y-2">
-      <label class="block font-medium">Connect to Peer ID:</label>
-      <input id="peer-id-input" class="w-full p-2 border rounded" />
-      <button id="connect-btn" class="w-full bg-purple-600 text-white py-2 rounded hover:bg-purple-700">Connect</button>
-    </div>
+      const [connections, setConnections] = useState({}); // peerId -> DataConnection
+      const [calls, setCalls] = useState({}); // peerId -> MediaConnection
 
-    <div class="flex space-x-2">
-      <button id="toggle-mic" class="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700">Mute Mic</button>
-      <button id="share-screen" class="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700">Share Screen</button>
-    </div>
+      const [status, setStatus] = useState('Initializing...');
+      const [isHost, setIsHost] = useState(false);
+      const [remoteId, setRemoteId] = useState('');
 
-    <div id="videos" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6"></div>
-  </div>
+      const [localStream, setLocalStream] = useState(null);
+      const localStreamRef = useRef(null);
+      const [micMuted, setMicMuted] = useState(false);
 
-  <script>
-    const myIdInput = document.getElementById("my-id");
-    const peerIdInput = document.getElementById("peer-id-input");
-    const connectBtn = document.getElementById("connect-btn");
-    const toggleMicBtn = document.getElementById("toggle-mic");
-    const shareScreenBtn = document.getElementById("share-screen");
-    const videosDiv = document.getElementById("videos");
+      const [remoteStreams, setRemoteStreams] = useState({}); // peerId -> stream
 
-    const peer = new Peer();
-    const connections = {}; // peerId -> conn
-    const calls = {}; // peerId -> call
-    let localMicTrack = null;
-    let localStream = null;
-    let isMuted = false;
+      const [isSharingScreen, setIsSharingScreen] = useState(false);
+      const [screenTrack, setScreenTrack] = useState(null);
+      const [currentScreenSharer, setCurrentScreenSharer] = useState(null);
 
-    const addVideoStream = (stream, label = "") => {
-      const video = document.createElement("video");
-      video.srcObject = stream;
-      video.autoplay = true;
-      video.playsInline = true;
-      video.className = "rounded shadow w-full";
-      if (label) {
-        const container = document.createElement("div");
-        const name = document.createElement("p");
-        name.className = "text-sm text-gray-600 mb-1";
-        name.innerText = label;
-        container.appendChild(name);
-        container.appendChild(video);
-        videosDiv.appendChild(container);
-      } else {
-        videosDiv.appendChild(video);
-      }
-    };
+      const mainVideoRef = useRef(null);
 
-    async function getMicStream() {
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      localMicTrack = micStream.getAudioTracks()[0];
-      return micStream;
-    }
+      // Setup PeerJS and get user media
+      useEffect(() => {
+        const p = new Peer();
+        setPeer(p);
 
-    function updateMicState() {
-      if (localMicTrack) {
-        localMicTrack.enabled = !isMuted;
-      }
-      toggleMicBtn.textContent = isMuted ? "Unmute Mic" : "Mute Mic";
-      toggleMicBtn.classList.toggle("bg-green-600", !isMuted);
-      toggleMicBtn.classList.toggle("bg-red-600", isMuted);
-    }
-
-    toggleMicBtn.onclick = () => {
-      isMuted = !isMuted;
-      updateMicState();
-    };
-
-    shareScreenBtn.onclick = async () => {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      const combinedStream = new MediaStream([screenStream.getVideoTracks()[0]]);
-      if (localMicTrack) combinedStream.addTrack(localMicTrack);
-
-      addVideoStream(combinedStream, "Your Screen");
-
-      // Re-call all peers with new screen+audio stream
-      for (const peerId of Object.keys(connections)) {
-        const call = peer.call(peerId, combinedStream);
-        calls[peerId] = call;
-        call.on("stream", stream => {
-          addVideoStream(stream, "Screen from " + peerId);
+        p.on('open', id => {
+          setPeerId(id);
+          setStatus('Ready');
         });
-      }
 
-      screenStream.getVideoTracks()[0].addEventListener("ended", () => {
-        console.log("Screen sharing stopped");
-      });
-    };
+        p.on('connection', conn => {
+          setConnections(prev => ({ ...prev, [conn.peer]: conn }));
+          conn.on('data', msg => {
+            if (msg.type === 'screen-share') {
+              setCurrentScreenSharer(msg.peerId);
+            }
+          });
+        });
 
-    connectBtn.onclick = async () => {
-      const remoteId = peerIdInput.value.trim();
-      if (!remoteId || remoteId === peer.id) return;
-      const conn = peer.connect(remoteId);
-      connections[remoteId] = conn;
+        p.on('call', call => {
+          // Always answer with local stream (audio + maybe video)
+          call.answer(localStreamRef.current);
+          setCalls(prev => ({ ...prev, [call.peer]: call }));
 
-      conn.on("open", async () => {
-        if (!localStream) {
-          const micStream = await getMicStream();
-          localMicTrack = micStream.getAudioTracks()[0];
-          localStream = micStream;
-          updateMicState();
+          call.on('stream', stream => {
+            setRemoteStreams(prev => ({ ...prev, [call.peer]: stream }));
+          });
+
+          call.on('close', () => {
+            setRemoteStreams(prev => {
+              const copy = { ...prev };
+              delete copy[call.peer];
+              return copy;
+            });
+          });
+        });
+
+        // Get local audio right away
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(stream => {
+            setLocalStream(stream);
+            localStreamRef.current = stream;
+          });
+
+        return () => {
+          p.destroy();
+          Object.values(connections).forEach(conn => conn.close());
+          Object.values(calls).forEach(call => call.close());
+          if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
+        };
+      }, []);
+
+      // Broadcast a message to all peers
+      const broadcast = (msg) => {
+        Object.values(connections).forEach(conn => {
+          if (conn.open) conn.send(msg);
+        });
+      };
+
+      // When local stream changes (start/stop screen or mic), update all outgoing calls
+      useEffect(() => {
+        Object.values(calls).forEach(call => {
+          if (!call.peerConnection) return;
+          const senders = call.peerConnection.getSenders();
+          if (localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach(track => {
+              const sender = senders.find(s => s.track && s.track.kind === track.kind);
+              if (sender) sender.replaceTrack(track);
+            });
+          }
+        });
+      }, [localStream, isSharingScreen]);
+
+      // Connect to another peer
+      const connectToPeer = async () => {
+        if (!peer || !remoteId) return;
+        const conn = peer.connect(remoteId);
+        setConnections(prev => ({ ...prev, [remoteId]: conn }));
+
+        conn.on('open', async () => {
+          setStatus('Connected to ' + remoteId);
+
+          // Start outgoing call for audio/video
+          const call = peer.call(remoteId, localStreamRef.current);
+          setCalls(prev => ({ ...prev, [remoteId]: call }));
+
+          call.on('stream', stream => {
+            setRemoteStreams(prev => ({ ...prev, [call.peer]: stream }));
+          });
+
+          call.on('close', () => {
+            setRemoteStreams(prev => {
+              const copy = { ...prev };
+              delete copy[call.peer];
+              return copy;
+            });
+          });
+        });
+
+        conn.on('data', msg => {
+          if (msg.type === 'screen-share') {
+            setCurrentScreenSharer(msg.peerId);
+          }
+        });
+      };
+
+      // Host or participant: start/stop screen share
+      const startScreenShare = async () => {
+        try {
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const combined = new MediaStream([
+            ...screenStream.getVideoTracks(),
+            ...micStream.getAudioTracks()
+          ]);
+          setLocalStream(combined);
+          localStreamRef.current = combined;
+          setIsSharingScreen(true);
+          setCurrentScreenSharer(peerId);
+          setScreenTrack(screenStream.getVideoTracks()[0]);
+
+          // Notify others who is sharing
+          broadcast({ type: 'screen-share', peerId });
+
+          screenStream.getVideoTracks()[0].addEventListener('ended', () => {
+            stopScreenShare();
+          });
+        } catch (e) {
+          setStatus('Screen share error: ' + e.message);
         }
+      };
 
-        const call = peer.call(remoteId, localStream);
-        calls[remoteId] = call;
-        call.on("stream", stream => {
-          addVideoStream(stream, "From " + remoteId);
+      const stopScreenShare = async () => {
+        // Switch to mic-only
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        setLocalStream(micStream);
+        localStreamRef.current = micStream;
+        setIsSharingScreen(false);
+        setCurrentScreenSharer(null);
+        setScreenTrack(null);
+
+        // Notify others
+        broadcast({ type: 'screen-share', peerId: null });
+      };
+
+      const toggleMute = () => {
+        if (!localStreamRef.current) return;
+        localStreamRef.current.getAudioTracks().forEach(track => {
+          track.enabled = !micMuted;
         });
-      });
+        setMicMuted(!micMuted);
+      };
 
-      peerIdInput.value = "";
+      // Video layout
+      const isTheatre = currentScreenSharer && remoteStreams[currentScreenSharer];
+
+      // Gather all video streams for display
+      const allVideos = Object.entries(remoteStreams).map(([pid, stream]) => ({
+        peerId: pid,
+        stream
+      }));
+      if (localStream && !isSharingScreen) {
+        allVideos.unshift({ peerId: peerId, stream: localStream });
+      }
+
+      return (
+        <div className="max-w-3xl w-full bg-white shadow-lg rounded p-6">
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V35</h1>
+          <div className="flex items-center space-x-2 mb-4">
+            <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
+            <label htmlFor="hostToggle" className="text-sm">I am the Host</label>
+          </div>
+          <div className="bg-gray-100 p-3 rounded mb-4 text-sm space-y-1">
+            <p><strong>Your Peer ID:</strong> {peerId || '...'}</p>
+            <p><strong>Status:</strong> {status}</p>
+            {currentScreenSharer &&
+              <p className="text-blue-600">Screen shared by {currentScreenSharer === peerId ? "You" : currentScreenSharer}</p>
+            }
+          </div>
+          <div className="mb-4 space-y-2">
+            <input
+              className="border p-2 w-full rounded"
+              placeholder="Enter Peer ID to connect"
+              value={remoteId}
+              onChange={e => setRemoteId(e.target.value)}
+            />
+            <button
+              onClick={connectToPeer}
+              className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold"
+            >
+              Connect
+            </button>
+          </div>
+          <div className="flex flex-col md:flex-row gap-4 mb-4">
+            <button
+              onClick={toggleMute}
+              className={`w-full py-2 rounded font-semibold flex items-center justify-center space-x-2 ${
+                micMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
+              } text-white`}
+            >
+              <span>{micMuted ? 'Unmute Mic' : 'Mute Mic'}</span>
+            </button>
+            <button
+              onClick={isSharingScreen ? stopScreenShare : startScreenShare}
+              className={`w-full py-2 rounded font-semibold flex items-center justify-center space-x-2 ${
+                isSharingScreen ? 'bg-gray-600 hover:bg-gray-700' : 'bg-blue-600 hover:bg-blue-700'
+              } text-white`}
+              disabled={isSharingScreen}
+            >
+              <span>{isSharingScreen ? 'Sharing Screen...' : 'Share Screen'}</span>
+            </button>
+          </div>
+          {/* THEATRE MODE */}
+          {isTheatre && (
+            <div className="w-full mb-4">
+              <div className="bg-black rounded overflow-hidden" style={{ width: '100%', aspectRatio: '16/9', position: 'relative' }}>
+                <video
+                  ref={mainVideoRef}
+                  srcObject={remoteStreams[currentScreenSharer]}
+                  autoPlay
+                  playsInline
+                  controls
+                  className="w-full h-full object-contain"
+                />
+                <div className="absolute bottom-2 right-2 px-2 py-1 bg-purple-700 text-white rounded text-xs opacity-80">
+                  Shared by {currentScreenSharer === peerId ? "You" : currentScreenSharer}
+                </div>
+              </div>
+              <div className="flex gap-2 mt-2 overflow-x-auto">
+                {/* Show other participant videos (audio only gets icon) */}
+                {allVideos.filter(v => v.peerId !== currentScreenSharer).map(({ peerId: pid, stream }) => (
+                  <div key={pid} className="flex flex-col items-center">
+                    <video
+                      srcObject={stream}
+                      autoPlay
+                      playsInline
+                      muted={pid === peerId}
+                      className="w-28 h-20 rounded bg-black object-cover"
+                      style={{ minWidth: 100 }}
+                    />
+                    <div className="text-xs mt-1">{pid === peerId ? "You" : pid}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* GRID MODE (no theatre) */}
+          {!isTheatre && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+              {allVideos.map(({ peerId: pid, stream }) => (
+                <div key={pid} className="flex flex-col items-center">
+                  <video
+                    srcObject={stream}
+                    autoPlay
+                    playsInline
+                    muted={pid === peerId}
+                    className="w-full max-h-[40vh] rounded bg-black object-contain"
+                  />
+                  <div className="text-xs mt-1">{pid === peerId ? "You" : pid}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Patch for React's video srcObject
+    function setSrcObject(element, stream) {
+      if (!element) return;
+      if ('srcObject' in element) {
+        if (element.srcObject !== stream) element.srcObject = stream;
+      } else {
+        element.src = window.URL.createObjectURL(stream);
+      }
+    }
+    // React useEffect for video srcObject binding
+    React.useEffect = (effect, deps) => {
+      const ref = React.useRef();
+      React.useLayoutEffect(() => {
+        ref.current = effect;
+      }, [effect]);
+      React.useEffect(() => ref.current && ref.current(), deps);
     };
 
-    peer.on("open", async id => {
-      myIdInput.value = id;
-      const micStream = await getMicStream();
-      localMicTrack = micStream.getAudioTracks()[0];
-      localStream = micStream;
-      updateMicState();
-    });
-
-    peer.on("call", call => {
-      call.answer(localStream);
-      calls[call.peer] = call;
-      call.on("stream", stream => {
-        addVideoStream(stream, "From " + call.peer);
+    // Patch all video elements' srcObject
+    React.useEffect(() => {
+      const allVideos = document.querySelectorAll('video');
+      allVideos.forEach(video => {
+        const srcObj = video.getAttribute('srcObject');
+        if (srcObj && typeof srcObj === 'object') setSrcObject(video, srcObj);
       });
     });
 
-    peer.on("connection", conn => {
-      connections[conn.peer] = conn;
-    });
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
 </html>
