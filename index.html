@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Screen Share V15</title>
+  <title>SyncLite V16</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -11,8 +11,8 @@
   <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
-<body>
-  <div id="root" class="min-h-screen bg-gray-100 flex flex-col items-center p-4"></div>
+<body class="bg-gray-100">
+  <div id="root" class="min-h-screen flex justify-center items-center p-4"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
@@ -26,6 +26,8 @@
       const [stream, setStream] = useState(null);
       const [remoteStream, setRemoteStream] = useState(null);
       const [micMuted, setMicMuted] = useState(false);
+      const [remoteAudioMuted, setRemoteAudioMuted] = useState(false);
+
       const videoRef = useRef(null);
       const connRef = useRef(null);
       const callRef = useRef(null);
@@ -37,69 +39,54 @@
           setStatus('Ready');
         });
 
-        // Handle incoming calls
         p.on('call', async call => {
           if (!isHost) {
-            // Viewer answering call from host
             call.answer();
             call.on('stream', remote => {
               setRemoteStream(remote);
-              setStatus('Receiving host screen & audio...');
+              setStatus('Receiving screen & audio from host');
             });
           } else {
-            // Host receives viewer mic stream
-            call.answer(); // no local stream
+            call.answer(); // accept viewer mic
             call.on('stream', viewerMic => {
               const audio = new Audio();
               audio.srcObject = viewerMic;
               audio.play();
-              setStatus('Receiving viewer audio');
+              setStatus('Receiving viewer mic');
             });
           }
         });
 
-        // Handle data connections
         p.on('connection', conn => {
           connRef.current = conn;
           conn.on('open', () => {
             if (isHost && stream) {
               const call = p.call(conn.peer, stream);
               callRef.current = call;
-              setStatus('Connected to viewer');
+              setStatus('Viewer connected');
             }
           });
         });
 
         setPeer(p);
-
-        return () => {
-          if (stream) stream.getTracks().forEach(t => t.stop());
-          p.destroy();
-        };
+        return () => { if (stream) stream.getTracks().forEach(t => t.stop()); p.destroy(); };
       }, [isHost, stream]);
 
       useEffect(() => {
         if (remoteStream && videoRef.current && !isHost) {
           const video = videoRef.current;
           video.srcObject = remoteStream;
-          video.muted = true;
+          video.muted = remoteAudioMuted;
           video.play().catch(() => {
-            console.warn("Autoplay failed on mobile. Tap to start video.");
+            console.warn("Autoplay blocked. Tap to start video.");
           });
         }
-      }, [remoteStream]);
+      }, [remoteStream, remoteAudioMuted]);
 
       const startScreenShare = async () => {
         try {
-          const screenStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-            audio: false
-          });
-
-          const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: false
-          });
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
           const combinedStream = new MediaStream([
             ...screenStream.getVideoTracks(),
@@ -147,9 +134,17 @@
         setMicMuted(!micMuted);
       };
 
+      const toggleRemoteAudio = () => {
+        if (videoRef.current) {
+          const newMuted = !remoteAudioMuted;
+          videoRef.current.muted = newMuted;
+          setRemoteAudioMuted(newMuted);
+        }
+      };
+
       return (
-        <div className="max-w-md w-full bg-white shadow-lg rounded p-6">
-          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V15</h1>
+        <div className="max-w-xl w-full bg-white shadow-lg rounded p-6">
+          <h1 className="text-2xl font-bold text-purple-600 mb-4 text-center">SyncLite V16</h1>
 
           <div className="flex items-center space-x-2 mb-4">
             <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
@@ -157,9 +152,7 @@
           </div>
 
           <div className="bg-gray-100 p-3 rounded mb-4 text-sm">
-            {isHost && stream && (
-              <p><strong>Peer ID:</strong> {peerId}</p>
-            )}
+            {isHost && stream && <p><strong>Peer ID:</strong> {peerId}</p>}
             <p><strong>Status:</strong> {status}</p>
           </div>
 
@@ -196,9 +189,27 @@
                 onClick={toggleMic}
                 className={`${
                   micMuted ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
-                } text-white px-4 py-2 rounded font-semibold`}
+                } text-white px-4 py-2 rounded font-semibold flex items-center justify-center space-x-2`}
               >
-                {micMuted ? 'Unmute My Audio' : 'Mute My Audio'}
+                {micMuted ? (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2"
+                         viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round"
+                            d="M15 19.5V21m0 0h-6v-1.5m6 0A9 9 0 003 12m18 0a9 9 0 00-6-8.5m0 0V3m0 0h-6v1.5m6 0v6.5a2 2 0 11-4 0V4.5"></path>
+                    </svg>
+                    <span>Unmute My Audio</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2"
+                         viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round"
+                            d="M9 5v6a3 3 0 006 0V5m3 4a9 9 0 11-6-8.5V3m0 0h-6v1.5m6 0v6.5"></path>
+                    </svg>
+                    <span>Mute My Audio</span>
+                  </>
+                )}
               </button>
             </div>
           )}
@@ -209,17 +220,44 @@
                 ref={videoRef}
                 autoPlay
                 playsInline
-                muted
                 controls
-                className="w-full rounded shadow"
-                style={{ minHeight: 300 }}
+                className="w-full rounded shadow-lg border-2 border-purple-200"
+                style={{ height: '320px', objectFit: 'contain' }}
               />
-              <button
-                onClick={() => videoRef.current?.play()}
-                className="mt-2 bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded w-full"
-              >
-                Tap to Play Video
-              </button>
+              <div className="mt-2 flex justify-between">
+                <button
+                  onClick={() => videoRef.current?.play()}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded"
+                >
+                  Tap to Play
+                </button>
+                <button
+                  onClick={toggleRemoteAudio}
+                  className={`${
+                    remoteAudioMuted ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+                  } text-white px-4 py-1 rounded flex items-center space-x-2`}
+                >
+                  {remoteAudioMuted ? (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2"
+                           viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round"
+                              d="M15 19.5V21m0 0h-6v-1.5m6 0A9 9 0 003 12m18 0a9 9 0 00-6-8.5m0 0V3m0 0h-6v1.5m6 0v6.5a2 2 0 11-4 0V4.5"></path>
+                      </svg>
+                      <span>Unmute</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2"
+                           viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round"
+                              d="M9 5v6a3 3 0 006 0V5m3 4a9 9 0 11-6-8.5V3m0 0h-6v1.5m6 0v6.5"></path>
+                      </svg>
+                      <span>Mute</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           )}
         </div>
