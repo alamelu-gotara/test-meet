@@ -72,7 +72,7 @@
 
       const startScreenShare = async () => {
         try {
-          const media = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+          const media = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
           setStream(media);
           setStatus('Screen sharing started');
 
