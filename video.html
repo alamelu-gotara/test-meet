@@ -432,7 +432,7 @@
               <p className="text-xs text-gray-400 mb-6">Video Chat become Simple</p>
               <div className="bg-gray-800 p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-md space-y-5">
                 <p className="text-center text-sm flex items-center justify-center">
-                  <div className="mr-2">Your Peer ID:</div> 
+                  <strong className="mr-2">Your Peer ID:</strong> 
                   <span className="text-green-400 break-all">{peerId || 'Connecting...'}</span>
                   {peerId && (<button onClick={handleCopyPeerId} className="copy-button" disabled={copied} title="Copy Peer ID">{copied ? 'Copied!' : <CopyIcon/>}</button>)}
                 </p>
