@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-  <title>SyncLite Pro Video Chat - V4.2</title>
+  <title>SyncLite Pro Video Chat - V4.3</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -42,6 +42,17 @@
     }
     .status-bar .timer { font-weight: 500; }
     .status-bar .network-info { display: flex; align-items: center; gap: 4px; }
+    .copy-button {
+        background-color: #4a5568; /* bg-gray-600 */
+        color: white;
+        padding: 0.25rem 0.5rem; /* py-1 px-2 */
+        font-size: 0.75rem; /* text-xs */
+        border-radius: 0.25rem; /* rounded-sm */
+        margin-left: 0.5rem; /* ml-2 */
+        transition: background-color 0.15s ease-in-out;
+    }
+    .copy-button:hover { background-color: #2d3748; /* bg-gray-700 */ }
+    .copy-button:disabled { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -50,19 +61,21 @@
   <script type="text/babel">
     const { useState, useRef, useEffect, useCallback, memo } = React;
 
-    // --- Icon Components (memoized, same as V4.1) ---
-    const MicOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>);
-    const MicOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3zM12 18.5A4.5 4.5 0 0016.5 14H8a4.5 4.5 0 004 4.5zM6 18L18 6M6 6l12 12" /></svg>); 
+    // --- Icon Components (memoized) ---
+    // Ensure Mic icons use same base size class as Video icons for controls
+    const MicOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>);
+    const MicOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3zM12 18.5A4.5 4.5 0 0016.5 14H8a4.5 4.5 0 004 4.5zM6 18L18 6M6 6l12 12" /></svg>); 
     const VideoOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z" /></svg>);
-    const VideoCamIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z" /></svg>);
+    const VideoCamIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z" /></svg>); // For placeholders
     const VideoOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1zm0 0l6.364-3.182M10.364 4.818L4 8m6.364-3.182l-1.455-2.723M6 18L18 6M6 6l12 12" /></svg>);
-    const VideoCamOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1zm0 0l6.364-3.182M10.364 4.818L4 8m6.364-3.182l-1.455-2.723M6 18L18 6M6 6l12 12" /></svg>);
+    const VideoCamOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1zm0 0l6.364-3.182M10.364 4.818L4 8m6.364-3.182l-1.455-2.723M6 18L18 6M6 6l12 12" /></svg>); // For placeholders
     const GalleryLayoutIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>);
     const SpeakerLayoutIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" /></svg>);
     const EndCallIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7.707 7.707a1 1 0 011.414-1.414L10 8.586l.879-.879a1 1 0 111.414 1.414L11.414 10l.879.879a1 1 0 01-1.414 1.414L10 11.414l-.879.879a1 1 0 01-1.414-1.414L8.586 10 7.707 9.121A1 1 0 017.707 7.707z" clipRule="evenodd" /></svg>);
     const ClockIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>);
     const WifiIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8.111 16.059A7.5 7.5 0 0112 15c1.599 0 3.078.504 4.332 1.342m3.236-3.307a12.024 12.024 0 00-15.136 0M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>);
     const SignalIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 4v16M12 9v11M17 13v7" /></svg>); 
+    const CopyIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>);
 
     // --- Child Components (Memoized) ---
     const VideoPlaceholder = memo(({ text }) => ( <div className="disabled-video-placeholder"><VideoCamOffIcon /> <span className="mt-2">{text}</span></div>));
@@ -71,8 +84,7 @@
           {isVideoOff && <VideoCamOffIcon />}
           {isAudioOff && !isVideoOff && <MicOffIcon />}
           <span className="mt-2 text-xs">{text}</span>
-      </div>
-    ));
+      </div>));
     
     const VideoPlayer = memo(({ videoData, isLocalVideoGloballyEnabled, isLocalAudioGloballyMuted }) => { 
       const { peerId: videoPeerId, stream, isLocal, name, audioEnabled, videoEnabled: participantVideoEnabled } = videoData;
@@ -84,7 +96,11 @@
       const actualIsLocalVideoOn = isLocal ? isLocalVideoGloballyEnabled : true; 
       if (isLocal && !actualIsLocalVideoOn) return <VideoPlaceholder text="Your camera is off" />;
       if (!isLocal && !participantVideoEnabled) return <RemoteMediaOffPlaceholder text={`${name}'s camera is off`} isVideoOff={true} isAudioOff={!audioEnabled} />;
-      if (!stream) return <RemoteMediaOffPlaceholder text={`${name} (Connecting...)`} isVideoOff={!participantVideoEnabled} isAudioOff={!audioEnabled}/>;
+      if (!stream && !isLocal) return <RemoteMediaOffPlaceholder text={`${name} (Connecting...)`} isVideoOff={!participantVideoEnabled} isAudioOff={!audioEnabled}/>;
+      if (!stream && isLocal && !actualIsLocalVideoOn) return <VideoPlaceholder text="Your camera is off" />; // Handles case where local user has no stream yet and video is off
+      if (!stream && isLocal && actualIsLocalVideoOn) return <VideoPlaceholder text="Initializing camera..." />; // Local user, video on, but no stream yet
+
+
       return (
         <div className="w-full h-full relative video-container-instance" data-peer-id={videoPeerId}>
           <video ref={videoRef} autoPlay playsInline muted={isLocal} className="video-element object-cover" />
@@ -95,12 +111,8 @@
     }, (prevProps, nextProps) => {
         const p = prevProps.videoData; const n = nextProps.videoData;
         let localPropsSame = true;
-        if (p.isLocal) {
-            localPropsSame = prevProps.isLocalVideoGloballyEnabled === nextProps.isLocalVideoGloballyEnabled &&
-                             prevProps.isLocalAudioGloballyMuted === nextProps.isLocalAudioGloballyMuted;
-        }
-        return p.stream === n.stream && p.name === n.name && p.audioEnabled === n.audioEnabled &&
-               p.videoEnabled === n.videoEnabled && p.isLocal === n.isLocal && p.peerId === n.peerId && localPropsSame;
+        if (p.isLocal) { localPropsSame = prevProps.isLocalVideoGloballyEnabled === nextProps.isLocalVideoGloballyEnabled && prevProps.isLocalAudioGloballyMuted === nextProps.isLocalAudioGloballyMuted; }
+        return p.stream === n.stream && p.name === n.name && p.audioEnabled === n.audioEnabled && p.videoEnabled === n.videoEnabled && p.isLocal === n.isLocal && p.peerId === n.peerId && localPropsSame;
     });
 
     const ControlButton = memo(({ title, onClick, children, active = false, activeColor = "bg-red-500", defaultColor = "bg-gray-600 hover:bg-gray-500" }) => ( <button title={title} onClick={onClick} className={`p-2.5 sm:p-3 rounded-full text-white transition-colors duration-150 ease-in-out ${active ? activeColor : defaultColor} focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50`}>{children}</button>));
@@ -121,12 +133,9 @@
 
     const VideoLayout = memo(({ videos, viewMode, activeSpeakerId, isLocalVideoGloballyEnabled, isLocalAudioGloballyMuted, onSetActiveSpeaker, onSetViewMode }) => {
         const activeSpeakerData = videos.find(v => v.peerId === activeSpeakerId);
-        // Ensure filmstrip doesn't include the active speaker
         const filmstripVideosData = videos.filter(v => v.peerId !== activeSpeakerId && (v.stream || v.isLocal)); 
-        const galleryGridVideosData = videos.filter(v => v.stream || v.isLocal); // Only render those with stream or local user
-
+        const galleryGridVideosData = videos.filter(v => v.stream || v.isLocal); 
         const galleryCols = galleryGridVideosData.length <= 1 ? 1 : (galleryGridVideosData.length <= 4 ? 2 : (galleryGridVideosData.length <= 9 ? 3 : 4));
-        
         return (
             <div className="flex-grow flex flex-col bg-black p-1 sm:p-2 min-h-0 mt-10 sm:mt-12">
             {viewMode === 'speaker' ? (
@@ -137,30 +146,24 @@
                 </div>
                 {filmstripVideosData.length > 0 && (
                    <div className="flex-shrink-0 h-24 sm:h-32 bg-gray-800 p-1 sm:p-2 flex space-x-1 sm:space-x-2 overflow-x-auto no-scrollbar items-center rounded-md">
-                    {filmstripVideosData.map(video => (
-                      <div key={video.peerId} className="video-container w-28 sm:w-40 h-full cursor-pointer border-2 border-transparent hover:border-purple-500"
-                        onClick={() => onSetActiveSpeaker(video.peerId)} tabIndex="0">
+                    {filmstripVideosData.map(video => (<div key={video.peerId} className="video-container w-28 sm:w-40 h-full cursor-pointer border-2 border-transparent hover:border-purple-500" onClick={() => onSetActiveSpeaker(video.peerId)} tabIndex="0">
                         <VideoPlayer videoData={video} isLocalVideoGloballyEnabled={isLocalVideoGloballyEnabled} isLocalAudioGloballyMuted={isLocalAudioGloballyMuted}/>
-                      </div>))}
-                  </div>)}
+                      </div>))}</div>)}
               </div>
             ) : ( 
               <div className={`flex-grow p-1 sm:p-2 grid gap-1 sm:gap-2 overflow-y-auto grid-cols-${galleryCols} min-h-0`}>
-                {galleryGridVideosData.map(video => (
-                  <div key={video.peerId} className="video-container aspect-video"
-                    onClick={() => { onSetActiveSpeaker(video.peerId); onSetViewMode('speaker');}} tabIndex="0">
+                {galleryGridVideosData.map(video => (<div key={video.peerId} className="video-container aspect-video" onClick={() => { onSetActiveSpeaker(video.peerId); onSetViewMode('speaker');}} tabIndex="0">
                     <VideoPlayer videoData={video} isLocalVideoGloballyEnabled={isLocalVideoGloballyEnabled} isLocalAudioGloballyMuted={isLocalAudioGloballyMuted}/>
                   </div>))}
                  {galleryGridVideosData.length === 0 && <div className="disabled-video-placeholder col-span-full row-span-full"><VideoPlaceholder text="No one here" /></div>}
-              </div>)}
-          </div>);
+              </div>)}</div>);
     });
 
 
     function App() {
       const [peerId, setPeerId] = useState('');
       const [roomId, setRoomId] = useState('');
-      const [displayName, setDisplayName] = useState(''); // Start with empty displayName
+      const [displayName, setDisplayName] = useState(''); 
       const [status, setStatus] = useState('Initializing Peer Connection...');
       const [videos, setVideos] = useState([]); 
       const [joined, setJoined] = useState(false);
@@ -171,6 +174,8 @@
       const [callStartTime, setCallStartTime] = useState(null);
       const [elapsedTime, setElapsedTime] = useState(0); 
       const [networkType, setNetworkType] = useState('loading...');
+      const [nameEntered, setNameEntered] = useState(false); // New state for login flow
+      const [copied, setCopied] = useState(false); // For copy button feedback
 
       const peerRef = useRef(null);
       const connectionsRef = useRef({});
@@ -182,8 +187,7 @@
         if (peerRef.current) peerRef.current.destroy();
         const newPeerInstance = new Peer(undefined, { debug: 3 });
         peerRef.current = newPeerInstance;
-        newPeerInstance.on('open', (id) => { setPeerId(id); setStatus('Ready. Enter Name & Room ID.'); }); // Updated status
-        // ... (rest of PeerJS event handlers are same as V4.1 but ensure displayName is used from state)
+        newPeerInstance.on('open', (id) => { setPeerId(id); setStatus('Ready. Enter Name.'); }); 
         newPeerInstance.on('connection', (conn) => {
           if (!peerRef.current || peerRef.current.disconnected || peerRef.current !== newPeerInstance) return;
           const remotePeerId = conn.peer; const remoteMeta = conn.metadata || {};
@@ -197,8 +201,9 @@
         newPeerInstance.on('call', (call) => {
           if (!peerRef.current || peerRef.current.disconnected || peerRef.current !== newPeerInstance) return;
           const remotePeerId = call.peer; const remoteMeta = call.metadata || {};
-          // Use current displayName from state for answering metadata
-          if (localStreamRef.current) call.answer(localStreamRef.current, { metadata: { displayName: displayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } });
+          // Use current displayName from state for answering metadata, only if it's set
+          const currentDisplayName = displayName.trim() || `User-${peerId.substring(0,4)}`;
+          if (localStreamRef.current) call.answer(localStreamRef.current, { metadata: { displayName: currentDisplayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } });
           else return; 
           callsRef.current[remotePeerId] = call;
           const initialName = remoteMeta.displayName || `Peer-${remotePeerId.substring(0,4)}`;
@@ -214,47 +219,39 @@
         newPeerInstance.on('close', () => console.log('PeerJS: "close" event (peer destroyed).'));
         newPeerInstance.on('error', (err) => { console.error('PeerJS Error:', err); if (peerRef.current === newPeerInstance && !peerRef.current.destroyed) setStatus(`PeerJS Error: ${err.type}`);});
         return () => { /* cleanup */
-            newPeerInstance.destroy(); 
-            if (peerRef.current === newPeerInstance) peerRef.current = null; 
+            newPeerInstance.destroy(); if (peerRef.current === newPeerInstance) peerRef.current = null; 
             Object.values(callsRef.current).forEach(c => c.close()); Object.values(connectionsRef.current).forEach(c => c.close());
             callsRef.current = {}; connectionsRef.current = {};
             localStreamRef.current?.getTracks().forEach(track => track.stop()); localStreamRef.current = null;
             clearInterval(timerIntervalRef.current);
         };
-      }, [displayName]); // IMPORTANT: displayName in dependency array for PeerJS init
-                         // This means if displayName changes, PeerJS object might re-initialize.
-                         // This is generally NOT what you want while in a call.
-                         // A better approach is to send name updates via signaling if name can change mid-call.
-                         // For now, this ensures the correct displayName is used when *new* connections/calls are made.
+      }, []); // Removed displayName from dependency array here. Metadata will use current displayName at time of call/connect.
 
       useEffect(() => { /* Timer effect */
-        if (joined && callStartTime) {
-          timerIntervalRef.current = setInterval(() => { setElapsedTime(prevTime => prevTime + 1); }, 1000);
+        if (joined && callStartTime) { timerIntervalRef.current = setInterval(() => { setElapsedTime(prevTime => prevTime + 1); }, 1000);
         } else { clearInterval(timerIntervalRef.current); setElapsedTime(0); }
         return () => clearInterval(timerIntervalRef.current);
       }, [joined, callStartTime]);
 
       useEffect(() => { /* Network connection listener */
         const updateNetworkInfo = () => { setNetworkType(navigator.connection ? (navigator.connection.type || 'N/A') : 'N/A'); };
-        updateNetworkInfo();
-        if (navigator.connection) navigator.connection.addEventListener('change', updateNetworkInfo);
+        updateNetworkInfo(); if (navigator.connection) navigator.connection.addEventListener('change', updateNetworkInfo);
         return () => { if (navigator.connection) navigator.connection.removeEventListener('change', updateNetworkInfo);};
       }, []);
       
-      const updateOrAddParticipant = useCallback((pId, stream = null, name = null, audioEnabled = true, videoEnabled = true, isLocal = false) => {
+      const updateOrAddParticipant = useCallback((pId, stream = undefined, name = null, audioEnabled = true, videoEnabled = true, isLocal = false) => {
         setVideos(prevVideos => {
           const existingVidIndex = prevVideos.findIndex(v => v.peerId === pId);
-          // If isLocal, always use the current global displayName state.
-          // Otherwise, use provided name, or existing, or fallback.
           let finalName = isLocal ? displayName : (name || (existingVidIndex !== -1 ? prevVideos[existingVidIndex].name : `Peer-${pId.substring(0,4)}`));
-          
+          if (!finalName && isLocal && displayName) finalName = displayName; // Ensure local user always tries to use current displayName
+          else if (!finalName && !isLocal) finalName = `Peer-${pId.substring(0,4)}`; // Fallback for remote if still no name
+
           if (existingVidIndex !== -1) {
             const currentVid = prevVideos[existingVidIndex];
-            if (currentVid.stream === stream && currentVid.name === finalName && 
-                currentVid.audioEnabled === audioEnabled && currentVid.videoEnabled === videoEnabled &&
-                currentVid.isLocal === isLocal) {
-                return prevVideos; 
-            }
+            if ( (stream === undefined || currentVid.stream === stream) && // only compare stream if it's passed
+                 currentVid.name === finalName && 
+                 currentVid.audioEnabled === audioEnabled && currentVid.videoEnabled === videoEnabled &&
+                 currentVid.isLocal === isLocal) { return prevVideos; }
             const updatedVid = { ...currentVid, name: finalName, audioEnabled, videoEnabled, isLocal };
             if (stream !== undefined) updatedVid.stream = stream;
             const newVideos = [...prevVideos]; newVideos[existingVidIndex] = updatedVid; return newVideos;
@@ -262,23 +259,24 @@
             return [...prevVideos, { peerId: pId, stream, name: finalName, isLocal, audioEnabled, videoEnabled }];
           }
         });
-         if (isLocal && !activeSpeakerId && stream) setActiveSpeakerId(pId);
+         if (isLocal && !activeSpeakerId && stream !== undefined && stream !== null) setActiveSpeakerId(pId);
       }, [displayName, activeSpeakerId]);
       
-      const broadcastMediaStatus = useCallback(() => { /* ... */ 
-        const statusPayload = { type: 'media-status-update', audioEnabled: !isMuted, videoEnabled: isVideoEnabled };
+      const broadcastMediaStatus = useCallback(() => { 
+        const currentDisplayName = displayName.trim() || `User-${peerId.substring(0,4)}`;
+        const statusPayload = { type: 'media-status-update', audioEnabled: !isMuted, videoEnabled: isVideoEnabled, name: currentDisplayName };
         Object.values(connectionsRef.current).forEach(conn => { if (conn.open) conn.send(statusPayload); });
-      }, [isMuted, isVideoEnabled]);
+       }, [isMuted, isVideoEnabled, displayName, peerId]);
 
-      const handleSignalingData = useCallback((data, conn) => { /* ... */ 
-        const senderPeerId = conn.peer;
-        const senderMeta = conn.metadata || {};
+      const handleSignalingData = useCallback((data, conn) => { 
+        const senderPeerId = conn.peer; const senderMeta = conn.metadata || {};
         const senderDisplayName = data.name || senderMeta.displayName || `Peer-${senderPeerId.substring(0,4)}`;
         switch (data.type) {
           case 'join-request':
             updateOrAddParticipant(senderPeerId, null, senderDisplayName, data.audioEnabled !== false, data.videoEnabled !== false);
             const currentPeers = videos.filter(v => v.peerId !== peerId).map(v => ({ peerId: v.peerId, name: v.name, audioEnabled: v.audioEnabled, videoEnabled: v.videoEnabled }));
-            conn.send({ type: 'room-info', peers: currentPeers, hostName: displayName, startTime: callStartTime || Date.now() });
+            const hostDisplayName = displayName.trim() || `Host-${peerId.substring(0,4)}`;
+            conn.send({ type: 'room-info', peers: currentPeers, hostName: hostDisplayName, startTime: callStartTime || Date.now() });
             Object.values(connectionsRef.current).forEach(c => { if (c.peer !== senderPeerId && c.open) c.send({ type: 'new-peer', peerId: senderPeerId, name: senderDisplayName, audioEnabled: data.audioEnabled !== false, videoEnabled: data.videoEnabled !== false }); });
             if (localStreamRef.current && !callsRef.current[senderPeerId]) callPeer(senderPeerId, senderDisplayName);
             break;
@@ -294,33 +292,34 @@
             updateOrAddParticipant(data.peerId, null, data.name, data.audioEnabled !== false, data.videoEnabled !== false);
             if (!callsRef.current[data.peerId]) connectAndCallPeer(data.peerId, data.name);
             break;
-          case 'media-status-update': updateOrAddParticipant(senderPeerId, null, null, data.audioEnabled, data.videoEnabled); break;
+          case 'media-status-update': updateOrAddParticipant(senderPeerId, null, data.name, data.audioEnabled, data.videoEnabled); break; // Use name from update
           default: console.warn("Unknown signaling data type:", data.type);
         }
-      }, [videos, displayName, callStartTime, updateOrAddParticipant, callPeer, connectAndCallPeer]); // Dependencies are important!
+       }, [videos, displayName, callStartTime, peerId, updateOrAddParticipant, callPeer, connectAndCallPeer]);
 
-      const handleDisconnect = useCallback((pId, reason = "Unknown") => { /* ... */
+      const handleDisconnect = useCallback((pId, reason = "Unknown") => {
         setVideos(prev => { const newVideos = prev.filter(v => v.peerId !== pId); if (activeSpeakerId === pId) { const newActive = newVideos.find(v => v.isLocal)?.peerId || (newVideos.length > 0 ? newVideos[0]?.peerId : null); setActiveSpeakerId(newActive); } return newVideos; });
         if (callsRef.current[pId]) { callsRef.current[pId].close(); delete callsRef.current[pId]; }
         if (connectionsRef.current[pId]) { connectionsRef.current[pId].close(); delete connectionsRef.current[pId]; }
-      }, [activeSpeakerId]);
+       }, [activeSpeakerId]);
       
-      const joinRoom = useCallback(async () => { /* ... ensure displayName from state is used in metadata ... */
-        if (!peerRef.current || !peerId || !roomId.trim() || !displayName.trim()) { setStatus(!peerId ? "PeerID not ready." : "Room/Name required."); return; }
+      const joinRoom = useCallback(async () => {
+        const currentDisplayName = displayName.trim() || `User-${peerId.substring(0,4)}`;
+        if (!peerRef.current || !peerId || !roomId.trim() || !currentDisplayName) { setStatus(!peerId ? "PeerID not ready." : "Name & Room required."); return; }
         setStatus('Getting media...');
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }});
           localStreamRef.current = stream;
           stream.getVideoTracks().forEach(t => t.enabled = isVideoEnabled); stream.getAudioTracks().forEach(t => t.enabled = !isMuted);
-          updateOrAddParticipant(peerId, stream, displayName, !isMuted, isVideoEnabled, true);
+          updateOrAddParticipant(peerId, stream, currentDisplayName, !isMuted, isVideoEnabled, true);
           setJoined(true); setActiveSpeakerId(peerId);
           if (roomId === peerId) { setCallStartTime(Date.now()); setStatus(`Hosting: ${peerId}`); } 
           else { 
             setStatus('Joining...');
-            const conn = peerRef.current.connect(roomId, { metadata: { displayName: displayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } }); // Use current displayName
+            const conn = peerRef.current.connect(roomId, { metadata: { displayName: currentDisplayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } });
             if (!conn) { setStatus("Failed to connect."); setJoined(false); return; }
             connectionsRef.current[roomId] = conn; 
-            conn.on('open', () => { conn.send({ type: 'join-request', name: displayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled }); });
+            conn.on('open', () => { conn.send({ type: 'join-request', name: currentDisplayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled }); });
             conn.on('data', data => handleSignalingData(data, conn));
             conn.on('close', () => { handleDisconnect(roomId, 'Host closed'); endCall(); });
             conn.on('error', err => { handleDisconnect(roomId, `Host conn error: ${err.type}`); endCall(); });
@@ -328,38 +327,40 @@
         } catch (err) { setStatus(`Media Error: ${err.message}. Check permissions.`); setJoined(false); }
        }, [peerId, roomId, displayName, isVideoEnabled, isMuted, updateOrAddParticipant, handleSignalingData, handleDisconnect, endCall]);
 
-      const callPeer = useCallback((targetPeerId, targetName = '') => { /* ... ensure displayName from state used in metadata ... */
+      const callPeer = useCallback((targetPeerId, targetName = '') => {
         if (!localStreamRef.current || callsRef.current[targetPeerId] || !peerRef.current || peerRef.current.disconnected) return;
         const remoteDisplayName = targetName || `Peer-${targetPeerId.substring(0,4)}`;
-        const call = peerRef.current.call(targetPeerId, localStreamRef.current, { metadata: { displayName: displayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } });
+        const currentDisplayName = displayName.trim() || `User-${peerId.substring(0,4)}`;
+        const call = peerRef.current.call(targetPeerId, localStreamRef.current, { metadata: { displayName: currentDisplayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } });
         if (!call) return;
         callsRef.current[targetPeerId] = call;
         updateOrAddParticipant(targetPeerId, null, remoteDisplayName, true, true); 
         call.on('stream', remoteStream => { const meta = call.metadata || {}; updateOrAddParticipant(targetPeerId, remoteStream, meta.displayName || remoteDisplayName, meta.audioEnabled !== false, meta.videoEnabled !== false)});
         call.on('close', () => handleDisconnect(targetPeerId, `Call closed`)); call.on('error', (err) => handleDisconnect(targetPeerId, `Call error: ${err.type}`));
-       }, [displayName, isMuted, isVideoEnabled, updateOrAddParticipant, handleDisconnect]);
+       }, [displayName, peerId, isMuted, isVideoEnabled, updateOrAddParticipant, handleDisconnect]);
 
-      const connectAndCallPeer = useCallback((targetPeerId, targetName = '') => { /* ... ensure displayName from state used in metadata ... */
+      const connectAndCallPeer = useCallback((targetPeerId, targetName = '') => {
         if (targetPeerId === peerId || (connectionsRef.current[targetPeerId] && callsRef.current[targetPeerId]) || !peerRef.current || peerRef.current.disconnected) return;
         const remoteDisplayName = targetName || `Peer-${targetPeerId.substring(0,4)}`;
+        const currentDisplayName = displayName.trim() || `User-${peerId.substring(0,4)}`;
         if (connectionsRef.current[targetPeerId]) { if (!callsRef.current[targetPeerId]) callPeer(targetPeerId, remoteDisplayName); return; }
-        const conn = peerRef.current.connect(targetPeerId, { metadata: { displayName: displayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } });
+        const conn = peerRef.current.connect(targetPeerId, { metadata: { displayName: currentDisplayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } });
         if (!conn) return;
         connectionsRef.current[targetPeerId] = conn;
         conn.on('open', () => { if (!callsRef.current[targetPeerId]) callPeer(targetPeerId, remoteDisplayName); });
         conn.on('data', data => handleSignalingData(data, conn));
         conn.on('close', () => handleDisconnect(targetPeerId, `Data conn closed`)); conn.on('error', err => handleDisconnect(targetPeerId, `Data conn error: ${err.type}`));
-      }, [displayName, isMuted, isVideoEnabled, callPeer, handleSignalingData, handleDisconnect]);
+      }, [displayName, peerId, isMuted, isVideoEnabled, callPeer, handleSignalingData, handleDisconnect]);
       
-      const endCall = useCallback(() => { /* ... */ 
+      const endCall = useCallback(() => { 
         Object.values(callsRef.current).forEach(call => call.close()); Object.values(connectionsRef.current).forEach(conn => conn.close());
         callsRef.current = {}; connectionsRef.current = {};
         localStreamRef.current?.getTracks().forEach(track => track.stop()); localStreamRef.current = null;
         setVideos([]); setJoined(false); setActiveSpeakerId(null); setIsMuted(false); setIsVideoEnabled(true); 
-        setCallStartTime(null); setElapsedTime(0); setStatus('Call ended.');
+        setCallStartTime(null); setElapsedTime(0); setStatus('Call ended.'); setNameEntered(false); // Reset nameEntered
        }, []);
 
-      const toggleMute = useCallback(() => { /* ... */ 
+      const toggleMute = useCallback(() => {
         if (!localStreamRef.current) return; const newMutedState = !isMuted;
         localStreamRef.current.getAudioTracks().forEach(track => { track.enabled = !newMutedState; });
         setIsMuted(newMutedState); 
@@ -367,15 +368,15 @@
         broadcastMediaStatus();
        }, [isMuted, peerId, displayName, isVideoEnabled, updateOrAddParticipant, broadcastMediaStatus]);
 
-      const toggleVideo = useCallback(() => { /* ... */ 
+      const toggleVideo = useCallback(() => {
         if (!localStreamRef.current) return; const newVideoEnabledState = !isVideoEnabled;
         localStreamRef.current.getVideoTracks().forEach(track => { track.enabled = newVideoEnabledState; });
-        setIsVideoEnabled(newVideoEnabledState);
+        setIsVideoEnabled(newVideoEnabledState); // This state change will trigger re-render for VideoPlayer
         updateOrAddParticipant(peerId, localStreamRef.current, displayName, !isMuted, newVideoEnabledState, true);
         broadcastMediaStatus();
        }, [isVideoEnabled, peerId, displayName, isMuted, updateOrAddParticipant, broadcastMediaStatus]);
 
-      const formatTime = useCallback((totalSeconds) => { /* ... */ 
+      const formatTime = useCallback((totalSeconds) => { 
         const hours = Math.floor(totalSeconds / 3600); const minutes = Math.floor((totalSeconds % 3600) / 60); const seconds = totalSeconds % 60;
         return `${hours > 0 ? String(hours).padStart(2, '0')+':' : ''}${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
       }, []);
@@ -383,19 +384,68 @@
       const handleToggleLayout = useCallback(() => setViewMode(prev => prev === 'gallery' ? 'speaker' : 'gallery'), []);
       const handleSetActiveSpeaker = useCallback((id) => setActiveSpeakerId(id), []);
 
+      const handleCopyPeerId = useCallback(() => {
+        if (peerId) {
+          navigator.clipboard.writeText(peerId).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000); // Reset after 2 seconds
+          }).catch(err => {
+            console.error('Failed to copy Peer ID: ', err);
+            // You could set an error message here if needed
+          });
+        }
+      }, [peerId]);
+
       return (
         <div className="w-full h-screen flex flex-col bg-gray-900">
           {!joined ? (
             <div className="flex-grow flex flex-col items-center justify-center p-4">
-              <h1 className="text-4xl font-bold text-purple-400 mb-2">SyncLite Pro - V4.2</h1>
+              <h1 className="text-4xl font-bold text-purple-400 mb-2">SyncLite Pro - V4.3</h1>
               <p className="text-xs text-gray-400 mb-6">Video Chat become Simple</p>
               <div className="bg-gray-800 p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-md space-y-5">
-                 {/* Peer ID is now displayed after name input for better flow if preferred, or keep above */}
-                <div><label htmlFor="displayNameInput" className="block text-xs font-medium text-gray-300 mb-1">Your Name</label><input id="displayNameInput" className="border-transparent p-3 w-full rounded-md bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:outline-none" placeholder="Enter your display name" value={displayName} onChange={e => setDisplayName(e.target.value)} disabled={!peerId} /></div>
-                <p className="text-center text-sm"><strong>Your Peer ID:</strong> <span className="text-green-400 break-all block mt-1">{peerId || 'Connecting...'}</span></p>
-                <div><label htmlFor="roomIdInput" className="block text-xs font-medium text-gray-300 mb-1">Room ID</label><input id="roomIdInput" className="border-transparent p-3 w-full rounded-md bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:outline-none" placeholder="Enter Room ID or your ID to host" value={roomId} onChange={e => setRoomId(e.target.value)} disabled={!peerId} /></div>
-                <p className="text-center text-xs text-red-400 h-4">{status.startsWith("Ready") ? "" : status}</p>
-                <button onClick={joinRoom} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-4 rounded-md w-full font-semibold disabled:opacity-50" disabled={!peerId || !roomId.trim() || !displayName.trim()}> {(roomId === peerId && peerId) ? 'Start & Host Chat' : 'Join Chat Room'} </button>
+                <p className="text-center text-sm">
+                  <strong>Your Peer ID:</strong> 
+                  <span className="text-green-400 break-all block mt-1">{peerId || 'Connecting...'}</span>
+                  {peerId && (
+                    <button onClick={handleCopyPeerId} className="copy-button" disabled={copied}>
+                      {copied ? 'Copied!' : <CopyIcon/>}
+                    </button>
+                  )}
+                </p>
+                
+                {peerId && ( /* Show name input only after Peer ID is available */
+                  <div>
+                    <label htmlFor="displayNameInput" className="block text-xs font-medium text-gray-300 mb-1">Your Name</label>
+                    <input 
+                      id="displayNameInput" 
+                      className="border-transparent p-3 w-full rounded-md bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:outline-none" 
+                      placeholder="Enter your display name" 
+                      value={displayName} 
+                      onChange={e => {
+                        setDisplayName(e.target.value);
+                        if (e.target.value.trim() !== '') setNameEntered(true); else setNameEntered(false);
+                      }} 
+                    />
+                  </div>
+                )}
+
+                {nameEntered && peerId && ( /* Show room ID input only after name is entered and Peer ID available */
+                  <div>
+                    <label htmlFor="roomIdInput" className="block text-xs font-medium text-gray-300 mb-1">Room ID</label>
+                    <input 
+                      id="roomIdInput" 
+                      className="border-transparent p-3 w-full rounded-md bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:outline-none" 
+                      placeholder="Enter Room ID or your ID to host" 
+                      value={roomId} 
+                      onChange={e => setRoomId(e.target.value)} 
+                    />
+                  </div>
+                )}
+                <p className="text-center text-xs text-red-400 h-4">{status.startsWith("Ready") ? (peerId ? (nameEntered ? "Enter Room ID." : "Enter Name.") : "Connecting Peer ID...") : status}</p>
+                <button onClick={joinRoom} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-4 rounded-md w-full font-semibold disabled:opacity-50" 
+                  disabled={!peerId || !roomId.trim() || !displayName.trim()}> 
+                  {(roomId === peerId && peerId && displayName.trim()) ? 'Start & Host Chat' : 'Join Chat Room'} 
+                </button>
               </div>
             </div>
           ) : (
