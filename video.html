@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SyncLite Video Chat V1</title>
+  <title>SyncLite Video Chat V2</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -17,167 +17,186 @@
     const { useState, useRef, useEffect } = React;
 
     function App() {
-      const [isHost, setIsHost] = useState(false);
+      // State
       const [peerId, setPeerId] = useState('');
-      const [remoteId, setRemoteId] = useState('');
+      const [roomId, setRoomId] = useState('');
       const [status, setStatus] = useState('Initializing...');
-      const [stream, setStream] = useState(null);
-      const [remoteStream, setRemoteStream] = useState(null);
-      const [isAudioMuted, setIsAudioMuted] = useState(false);
+      const [peers, setPeers] = useState([]);
+      const [videos, setVideos] = useState([]); // {peerId, stream}
+      const [joined, setJoined] = useState(false);
 
+      // Refs
       const peerRef = useRef(null);
-      const callRef = useRef(null);
-      const videoRef = useRef(null);
-      const remoteVideoRef = useRef(null);
-      const localMicTrack = useRef(null);
+      const connectionsRef = useRef({});
+      const callsRef = useRef({});
+      const localStreamRef = useRef(null);
 
+      // Get Peer ID on load
       useEffect(() => {
         const peer = new Peer();
         peerRef.current = peer;
-
         peer.on('open', id => {
           setPeerId(id);
           setStatus('Ready');
         });
 
-        peer.on('call', call => {
-          call.answer(stream);
-          call.on('stream', remote => {
-            setRemoteStream(remote);
-            setStatus('In Chat');
+        // Handle incoming connections (for signaling)
+        peer.on('connection', conn => {
+          conn.on('data', data => {
+            if (data.type === 'join-room') {
+              // Send list of peers in the room
+              conn.send({ type: 'peer-list', peers: Object.keys(connectionsRef.current) });
+              // Broadcast new peer to others
+              Object.values(connectionsRef.current).forEach(c => {
+                c.send({ type: 'new-peer', peerId: data.peerId });
+              });
+              // Add new peer to our list
+              connectionsRef.current[data.peerId] = conn;
+              setPeers(Object.keys(connectionsRef.current));
+            } else if (data.type === 'new-peer') {
+              if (!connectionsRef.current[data.peerId] && data.peerId !== peerId) {
+                // Connect back to new peer
+                joinPeer(data.peerId);
+              }
+            }
           });
-          callRef.current = call;
+        });
+
+        // Handle incoming calls (for media)
+        peer.on('call', call => {
+          call.answer(localStreamRef.current);
+          call.on('stream', remoteStream => {
+            addVideo(call.peer, remoteStream);
+          });
+          callsRef.current[call.peer] = call;
         });
 
         return () => {
-          if (stream) stream.getTracks().forEach(t => t.stop());
-          if (callRef.current) callRef.current.close();
           peer.destroy();
+          Object.values(callsRef.current).forEach(call => call.close());
         };
-      }, [stream]);
+      }, []);
 
-      useEffect(() => {
-        if (videoRef.current && stream) {
-          videoRef.current.srcObject = stream;
-        }
-      }, [stream]);
+      // Add video stream to UI if not already present
+      function addVideo(peerId, stream) {
+        setVideos(vs => {
+          if (vs.some(v => v.peerId === peerId)) return vs;
+          return [...vs, { peerId, stream }];
+        });
+      }
 
-      useEffect(() => {
-        if (remoteVideoRef.current && remoteStream) {
-          remoteVideoRef.current.srcObject = remoteStream;
-        }
-      }, [remoteStream]);
+      // Join a room
+      async function joinRoom() {
+        setStatus('Getting media...');
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localStreamRef.current = stream;
+        addVideo(peerId, stream);
 
-      const startHost = async () => {
-        try {
-          const userStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-          setStream(userStream);
-          localMicTrack.current = userStream.getAudioTracks()[0];
-          setStatus('Waiting for participant...');
-        } catch (e) {
-          setStatus('Error: ' + e.message);
-        }
-      };
+        setStatus('Joining room...');
+        setJoined(true);
 
-      const connectToHost = async () => {
-        try {
-          const userStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-          setStream(userStream);
-          localMicTrack.current = userStream.getAudioTracks()[0];
-          const call = peerRef.current.call(remoteId, userStream);
-          call.on('stream', remote => {
-            setRemoteStream(remote);
-            setStatus('In Chat');
+        // Connect to the room host (roomId)
+        if (roomId !== peerId) {
+          const conn = peerRef.current.connect(roomId);
+          conn.on('open', () => {
+            connectionsRef.current[roomId] = conn;
+            conn.send({ type: 'join-room', peerId });
           });
-          callRef.current = call;
-          setStatus('Calling host...');
-        } catch (e) {
-          setStatus('Error: ' + e.message);
+          conn.on('data', data => {
+            if (data.type === 'peer-list') {
+              data.peers.forEach(pid => {
+                if (pid !== peerId && !connectionsRef.current[pid]) {
+                  joinPeer(pid);
+                }
+              });
+            } else if (data.type === 'new-peer') {
+              if (!connectionsRef.current[data.peerId] && data.peerId !== peerId) {
+                joinPeer(data.peerId);
+              }
+            }
+          });
         }
-      };
+      }
 
-      const toggleMute = () => {
-        if (localMicTrack.current) {
-          const newState = !isAudioMuted;
-          localMicTrack.current.enabled = !newState;
-          setIsAudioMuted(newState);
+      // Connect to a peer and call them
+      function joinPeer(pid) {
+        const conn = peerRef.current.connect(pid);
+        connectionsRef.current[pid] = conn;
+        conn.on('open', () => {
+          conn.send({ type: 'new-peer', peerId });
+        });
+        conn.on('data', data => {
+          // Not needed for now
+        });
+
+        // Call with our media
+        const call = peerRef.current.call(pid, localStreamRef.current);
+        call.on('stream', remoteStream => {
+          addVideo(pid, remoteStream);
+        });
+        callsRef.current[pid] = call;
+      }
+
+      // Mute/unmute local audio
+      function toggleMute() {
+        if (localStreamRef.current) {
+          localStreamRef.current.getAudioTracks().forEach(track => {
+            track.enabled = !track.enabled;
+          });
         }
-      };
+      }
+
+      // Remove video when peer leaves (not implemented here, but can be added)
 
       return (
-        <div className="w-full max-w-2xl mx-auto bg-gray-800 shadow-lg rounded p-6 mt-8">
-          <h1 className="text-3xl font-bold text-purple-400 mb-4 text-center">SyncLite Video Chat V1</h1>
-
-          <div className="flex items-center space-x-2 mb-4">
-            <input type="checkbox" id="hostToggle" checked={isHost} onChange={() => setIsHost(!isHost)} />
-            <label htmlFor="hostToggle" className="text-lg text-white">I am the Host</label>
-          </div>
-
+        <div className="w-full max-w-3xl mx-auto bg-gray-800 shadow-lg rounded p-6 mt-8">
+          <h1 className="text-3xl font-bold text-purple-400 mb-4 text-center">SyncLite Video Chat V2</h1>
           <div className="bg-gray-700 p-3 rounded mb-4 text-sm space-y-1 text-white">
-            {isHost && <p><strong>Peer ID:</strong> {peerId}</p>}
+            <p><strong>Your Peer ID:</strong> {peerId}</p>
             <p><strong>Status:</strong> {status}</p>
+            <p><strong>Connected Peers:</strong> {peers.join(', ')}</p>
           </div>
-
-          {isHost && !stream && (
-            <button
-              onClick={startHost}
-              className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold"
-            >
-              Start Host to Chat
-            </button>
-          )}
-
-          {!isHost && (
+          {!joined && (
             <div className="mb-4 space-y-2">
               <input
                 className="border p-2 w-full rounded"
-                placeholder="Enter Host ID"
-                value={remoteId}
-                onChange={e => setRemoteId(e.target.value)}
+                placeholder="Enter Room Host Peer ID (or your own to host)"
+                value={roomId}
+                onChange={e => setRoomId(e.target.value)}
               />
               <button
-                onClick={connectToHost}
+                onClick={joinRoom}
                 className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded w-full font-semibold"
+                disabled={!peerId || !roomId}
               >
-                Join Chat
+                {roomId === peerId ? 'Start Host to Chat' : 'Join Chat'}
               </button>
             </div>
           )}
-
-          <div className="flex flex-col md:flex-row gap-4 mt-6 justify-center items-center">
-            {stream && (
-              <div>
-                <p className="text-center text-gray-300 mb-2">{isHost ? "Your Video (Host)" : "Your Video"}</p>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-64 h-48 rounded shadow-lg bg-black"
-                />
-                <button
-                  onClick={toggleMute}
-                  className={`mt-2 w-full py-2 px-4 rounded font-semibold ${
-                    isAudioMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
-                  } text-white`}
-                >
-                  {isAudioMuted ? 'Unmute Mic' : 'Mute Mic'}
-                </button>
-              </div>
-            )}
-
-            {remoteStream && (
-              <div>
-                <p className="text-center text-gray-300 mb-2">Remote Video</p>
-                <video
-                  ref={remoteVideoRef}
-                  autoPlay
-                  playsInline
-                  className="w-64 h-48 rounded shadow-lg bg-black"
-                />
-              </div>
-            )}
-          </div>
+          {joined && (
+            <div className="flex flex-wrap gap-4 justify-center items-center">
+              {videos.map(({peerId: pid, stream}) => (
+                <div key={pid} className="flex flex-col items-center">
+                  <video
+                    autoPlay
+                    playsInline
+                    muted={pid === peerId}
+                    ref={el => { if (el) el.srcObject = stream; }}
+                    className="w-64 h-48 rounded shadow-lg bg-black"
+                  />
+                  <span className="text-gray-300 text-xs mt-1">{pid === peerId ? 'You' : pid}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {joined && (
+            <button
+              onClick={toggleMute}
+              className="mt-4 w-full py-2 px-4 rounded font-semibold bg-green-600 hover:bg-green-700 text-white"
+            >
+              Toggle Mute
+            </button>
+          )}
         </div>
       );
     }
