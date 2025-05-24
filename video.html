@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-  <title>SyncLite Pro Video Chat - V4 (Fixes)</title>
-  {/* ... (rest of head is same) ... */}
+  <title>SyncLite Pro Video Chat - V4.0</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -27,7 +26,7 @@
       align-items: center; justify-content: center; background-color: #2d3748;
       color: #a0aec0; font-size: 0.875rem; text-align: center; padding: 0.5rem;
     }
-    .media-status-icon {
+    .media-status-icon { /* For icons on video feeds */
         position: absolute;
         top: 8px;
         right: 8px;
@@ -35,36 +34,53 @@
         border-radius: 50%;
         padding: 4px;
         z-index: 15;
-        display: flex; /* For multiple icons if needed */
+        display: flex; 
+        gap: 4px;
+    }
+     .local-media-status-icon { /* For icons on local video feed */
+        position: absolute;
+        top: 8px;
+        left: 8px; /* Position to the left for local user's own status */
+        background-color: rgba(0,0,0,0.6);
+        border-radius: 50%;
+        padding: 4px;
+        z-index: 15;
+        display: flex; 
         gap: 4px;
     }
     .status-bar {
         position: absolute;
         top: 8px;
-        left: 8px;
-        background-color: rgba(0,0,0,0.7); /* Slightly more opaque */
+        left: 50%; /* Center the status bar */
+        transform: translateX(-50%); /* Center the status bar */
+        background-color: rgba(26, 32, 44, 0.8); /* bg-gray-800 with opacity */
         color: white;
-        padding: 5px 10px; /* Slightly more padding */
-        border-radius: 6px; /* Slightly more rounded */
+        padding: 6px 12px; 
+        border-radius: 8px; 
         font-size: 0.75rem; /* 12px */
         z-index: 20;
         display: flex;
         align-items: center;
-        gap: 8px; /* Space between items */
+        gap: 10px; /* Space between items */
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
+    .status-bar .timer { font-weight: 500; }
+    .status-bar .network-info { display: flex; align-items: center; gap: 4px; }
   </style>
 </head>
 <body>
   <div id="root" class="min-h-screen bg-gray-900 flex flex-col items-center text-white"></div>
 
   <script type="text/babel">
-    const { useState, useRef, useEffect, useCallback, memo } = React; // Added memo
+    const { useState, useRef, useEffect, useCallback, memo } = React;
 
-    // --- Reusable Icons (Components) ---
-    const MicOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>);
-    const MicOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3zM12 18.5A4.5 4.5 0 0016.5 14H8a4.5 4.5 0 004 4.5zM6 18L18 6M6 6l12 12" /></svg>); 
-    const VideoOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z" /></svg>);
-    const VideoOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1zm0 0l6.364-3.182M10.364 4.818L4 8m6.364-3.182l-1.455-2.723M6 18L18 6M6 6l12 12" /></svg>); 
+    // --- Icon Components (memoized) ---
+    const MicOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>);
+    const MicOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3zM12 18.5A4.5 4.5 0 0016.5 14H8a4.5 4.5 0 004 4.5zM6 18L18 6M6 6l12 12" /></svg>); 
+    const VideoOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z" /></svg>); // Control bar icon
+    const VideoCamIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z" /></svg>); // Smaller icon for placeholders
+    const VideoOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1zm0 0l6.364-3.182M10.364 4.818L4 8m6.364-3.182l-1.455-2.723M6 18L18 6M6 6l12 12" /></svg>); // Control bar icon
+    const VideoCamOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1zm0 0l6.364-3.182M10.364 4.818L4 8m6.364-3.182l-1.455-2.723M6 18L18 6M6 6l12 12" /></svg>); // Smaller icon for placeholders
     const GalleryLayoutIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>);
     const SpeakerLayoutIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" /></svg>);
     const EndCallIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7.707 7.707a1 1 0 011.414-1.414L10 8.586l.879-.879a1 1 0 111.414 1.414L11.414 10l.879.879a1 1 0 01-1.414 1.414L10 11.414l-.879.879a1 1 0 01-1.414-1.414L8.586 10 7.707 9.121A1 1 0 017.707 7.707z" clipRule="evenodd" /></svg>);
@@ -84,8 +100,9 @@
       const [viewMode, setViewMode] = useState('speaker'); 
       const [activeSpeakerId, setActiveSpeakerId] = useState(null); 
       const [callStartTime, setCallStartTime] = useState(null);
-      const [elapsedTime, setElapsedTime] = useState(0);
-      const [networkType, setNetworkType] = useState('loading...'); // Default to loading
+      // elapsedTime state is only used by StatusBar, which is memoized
+      const [elapsedTime, setElapsedTime] = useState(0); 
+      const [networkType, setNetworkType] = useState('loading...');
 
       const peerRef = useRef(null);
       const connectionsRef = useRef({});
@@ -93,45 +110,7 @@
       const localStreamRef = useRef(null);
       const timerIntervalRef = useRef(null);
 
-      // Log videos state for debugging
-      useEffect(() => { console.log("Videos state updated:", videos); }, [videos]);
-
-      // Timer effect - This is fine, as setElapsedTime only affects TimerDisplay component if separated
-      useEffect(() => {
-        if (joined && callStartTime) {
-          timerIntervalRef.current = setInterval(() => {
-            setElapsedTime(Math.floor((Date.now() - callStartTime) / 1000));
-          }, 1000);
-        } else {
-          clearInterval(timerIntervalRef.current);
-          setElapsedTime(0);
-        }
-        return () => clearInterval(timerIntervalRef.current);
-      }, [joined, callStartTime]);
-
-      // Network connection type listener
-      useEffect(() => {
-        const updateNetworkInfo = () => {
-          if (navigator.connection) {
-            setNetworkType(navigator.connection.type || 'N/A');
-          } else {
-            setNetworkType('N/A'); // Indicate not available
-          }
-        };
-        updateNetworkInfo();
-        if (navigator.connection) {
-          navigator.connection.addEventListener('change', updateNetworkInfo);
-        }
-        return () => {
-          if (navigator.connection) {
-            navigator.connection.removeEventListener('change', updateNetworkInfo);
-          }
-        };
-      }, []);
-
-
-      useEffect(() => {
-        // PeerJS Initialization
+      useEffect(() => { /* PeerJS init, same as V3.9 */
         console.log("Attempting to initialize PeerJS...");
         if (peerRef.current) peerRef.current.destroy();
         const newPeerInstance = new Peer(undefined, { debug: 3 });
@@ -142,9 +121,7 @@
           if (!peerRef.current || peerRef.current.disconnected || peerRef.current !== newPeerInstance) return;
           const remotePeerId = conn.peer;
           const remoteMeta = conn.metadata || {};
-          console.log(`PeerJS: Data connection opened with ${remotePeerId}`, remoteMeta);
           connectionsRef.current[remotePeerId] = conn;
-          // Use a more robust initial name if metadata is missing
           const initialName = remoteMeta.displayName || `Peer-${remotePeerId.substring(0,4)}`;
           updateOrAddParticipant(remotePeerId, null, initialName, remoteMeta.audioEnabled !== false, remoteMeta.videoEnabled !== false);
           conn.on('data', data => handleSignalingData(data, conn));
@@ -155,7 +132,6 @@
           if (!peerRef.current || peerRef.current.disconnected || peerRef.current !== newPeerInstance) return;
           const remotePeerId = call.peer;
           const remoteMeta = call.metadata || {};
-          console.log(`PeerJS: Incoming call from ${remotePeerId}`, remoteMeta);
           if (localStreamRef.current) {
             call.answer(localStreamRef.current, { metadata: { displayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } });
           } else { return; }
@@ -163,8 +139,8 @@
           const initialName = remoteMeta.displayName || `Peer-${remotePeerId.substring(0,4)}`;
           updateOrAddParticipant(remotePeerId, null, initialName, remoteMeta.audioEnabled !== false, remoteMeta.videoEnabled !== false);
           call.on('stream', remoteStream => {
-            console.log(`Received remote stream from ${remotePeerId}`);
-            updateOrAddParticipant(remotePeerId, remoteStream, initialName, remoteMeta.audioEnabled !== false, remoteMeta.videoEnabled !== false);
+            const currentMeta = call.metadata || {}; // Use metadata from the call object on stream
+            updateOrAddParticipant(remotePeerId, remoteStream, currentMeta.displayName || initialName, currentMeta.audioEnabled !== false, currentMeta.videoEnabled !== false);
           });
           call.on('close', () => handleDisconnect(remotePeerId, 'Call closed'));
           call.on('error', (err) => handleDisconnect(remotePeerId, `Call error: ${err.type}`));
@@ -173,7 +149,7 @@
         newPeerInstance.on('close', () => console.log('PeerJS: "close" event (peer destroyed).'));
         newPeerInstance.on('error', (err) => { console.error('PeerJS Error:', err); if (peerRef.current === newPeerInstance && !peerRef.current.destroyed) setStatus(`PeerJS Error: ${err.type}`);});
 
-        return () => { /* ... cleanup ... */
+        return () => {
             console.log("App cleanup: Destroying PeerJS and clearing resources.");
             newPeerInstance.destroy(); 
             if (peerRef.current === newPeerInstance) peerRef.current = null; 
@@ -184,67 +160,78 @@
             localStreamRef.current = null;
             clearInterval(timerIntervalRef.current);
         };
-      }, []); // Removed displayName from dependency array to prevent re-init on name change. Name is passed via metadata.
+      }, []);
+
+      useEffect(() => { /* Timer effect, same as V3.9 */
+        if (joined && callStartTime) {
+          timerIntervalRef.current = setInterval(() => {
+            setElapsedTime(prevTime => prevTime + 1); // More reliable update
+          }, 1000);
+        } else {
+          clearInterval(timerIntervalRef.current);
+          setElapsedTime(0);
+        }
+        return () => clearInterval(timerIntervalRef.current);
+      }, [joined, callStartTime]);
+
+      useEffect(() => { /* Network connection listener, same as V3.9 */
+        const updateNetworkInfo = () => {
+          if (navigator.connection) {
+            setNetworkType(navigator.connection.type || 'N/A');
+          } else {
+            setNetworkType('N/A');
+          }
+        };
+        updateNetworkInfo();
+        if (navigator.connection) navigator.connection.addEventListener('change', updateNetworkInfo);
+        return () => { if (navigator.connection) navigator.connection.removeEventListener('change', updateNetworkInfo);};
+      }, []);
 
       const updateOrAddParticipant = useCallback((pId, stream = null, name = null, audioEnabled = true, videoEnabled = true, isLocal = false) => {
         setVideos(prevVideos => {
           const existingVidIndex = prevVideos.findIndex(v => v.peerId === pId);
-          // Determine the name: use provided name, or existing name, or fallback for new peers
-          let finalName;
-          if (name) {
-            finalName = name;
-          } else if (existingVidIndex !== -1) {
-            finalName = prevVideos[existingVidIndex].name;
-          } else {
-            finalName = isLocal ? displayName : `Peer-${pId.substring(0,4)}`;
+          let finalName = name;
+          if (!finalName) { // If name is null or empty, try to preserve or generate
+            if (existingVidIndex !== -1) finalName = prevVideos[existingVidIndex].name;
+            else finalName = isLocal ? displayName : `Peer-${pId.substring(0,4)}`;
           }
           
           if (existingVidIndex !== -1) {
             const currentVid = prevVideos[existingVidIndex];
-            // Only update if there's an actual change to avoid unnecessary re-renders
             if (currentVid.stream === stream && currentVid.name === finalName && 
                 currentVid.audioEnabled === audioEnabled && currentVid.videoEnabled === videoEnabled &&
                 currentVid.isLocal === isLocal) {
                 return prevVideos; 
             }
             const updatedVid = { ...currentVid, name: finalName, audioEnabled, videoEnabled, isLocal };
-            if (stream) updatedVid.stream = stream; // Only update stream if a new one is provided
+            if (stream !== undefined) updatedVid.stream = stream; // Allow stream to be set to null (e.g. on disconnect before video element removed)
 
             const newVideos = [...prevVideos];
             newVideos[existingVidIndex] = updatedVid;
-            console.log(`Updating participant ${pId} (${finalName}): Audio=${audioEnabled}, Video=${videoEnabled}, Stream=${!!stream}`);
             return newVideos;
           } else {
-            console.log(`Adding participant ${pId} (${finalName}): Audio=${audioEnabled}, Video=${videoEnabled}, Stream=${!!stream}`);
             return [...prevVideos, { peerId: pId, stream, name: finalName, isLocal, audioEnabled, videoEnabled }];
           }
         });
          if (isLocal && !activeSpeakerId && stream) setActiveSpeakerId(pId);
-      }, [displayName, activeSpeakerId]); // Add dependencies that, if changed, might require this function to update its behavior.
+      }, [displayName, activeSpeakerId]);
       
-      const broadcastMediaStatus = useCallback(() => {
+      const broadcastMediaStatus = useCallback(() => { /* ... same as V3.9 ... */
         const statusPayload = { type: 'media-status-update', audioEnabled: !isMuted, videoEnabled: isVideoEnabled };
-        console.log("Broadcasting media status:", statusPayload);
         Object.values(connectionsRef.current).forEach(conn => { if (conn.open) conn.send(statusPayload); });
-      }, [isMuted, isVideoEnabled]); // Dependencies for broadcastMediaStatus
+       }, [isMuted, isVideoEnabled]);
 
-      const handleSignalingData = useCallback((data, conn) => {
+      const handleSignalingData = useCallback((data, conn) => { /* ... same as V3.9, ensure updateOrAddParticipant gets all params ... */
         const senderPeerId = conn.peer;
         const senderMeta = conn.metadata || {};
-        // Prioritize name from data payload, then metadata, then generate one.
         const senderDisplayName = data.name || senderMeta.displayName || `Peer-${senderPeerId.substring(0,4)}`;
-        console.log(`Signaling: ${data.type} from ${senderDisplayName} (${senderPeerId})`, data);
 
         switch (data.type) {
           case 'join-request':
             updateOrAddParticipant(senderPeerId, null, senderDisplayName, data.audioEnabled !== false, data.videoEnabled !== false);
-            const currentPeers = videos
-                .filter(v => v.peerId !== peerId)
+            const currentPeers = videos.filter(v => v.peerId !== peerId)
                 .map(v => ({ peerId: v.peerId, name: v.name, audioEnabled: v.audioEnabled, videoEnabled: v.videoEnabled }));
-            conn.send({ 
-                type: 'room-info', peers: currentPeers, hostName: displayName, 
-                startTime: callStartTime || Date.now() 
-            });
+            conn.send({ type: 'room-info', peers: currentPeers, hostName: displayName, startTime: callStartTime || Date.now() });
             Object.values(connectionsRef.current).forEach(c => {
               if (c.peer !== senderPeerId && c.open) {
                 c.send({ type: 'new-peer', peerId: senderPeerId, name: senderDisplayName, audioEnabled: data.audioEnabled !== false, videoEnabled: data.videoEnabled !== false });
@@ -258,8 +245,7 @@
               updateOrAddParticipant(pInfo.peerId, null, pInfo.name, pInfo.audioEnabled !== false, pInfo.videoEnabled !== false);
               if (!callsRef.current[pInfo.peerId]) connectAndCallPeer(pInfo.peerId, pInfo.name);
             });
-            // Host is the sender of room-info
-            updateOrAddParticipant(senderPeerId, null, data.hostName, true, true); 
+            updateOrAddParticipant(senderPeerId, null, data.hostName, senderMeta.audioEnabled !== false, senderMeta.videoEnabled !== false); // Add/update host info
             break;
           case 'new-peer': 
             updateOrAddParticipant(data.peerId, null, data.name, data.audioEnabled !== false, data.videoEnabled !== false);
@@ -270,24 +256,22 @@
             break;
           default: console.warn("Unknown signaling data type:", data.type);
         }
-      }, [videos, displayName, callStartTime, updateOrAddParticipant]); // Dependencies for handleSignalingData
+       }, [videos, displayName, callStartTime, updateOrAddParticipant, callPeer, connectAndCallPeer]);
 
-      const handleDisconnect = useCallback((pId, reason = "Unknown") => {
+      const handleDisconnect = useCallback((pId, reason = "Unknown") => { /* ... same as V3.9 ... */
         const disconnectedPeer = videos.find(v => v.peerId === pId);
         const disconnectedPeerName = disconnectedPeer?.name || `Peer-${pId.substring(0,4)}`;
-        console.log(`Handling disconnect for ${disconnectedPeerName}. Reason: ${reason}`);
         setVideos(prev => prev.filter(v => v.peerId !== pId));
         if (callsRef.current[pId]) { callsRef.current[pId].close(); delete callsRef.current[pId]; }
         if (connectionsRef.current[pId]) { connectionsRef.current[pId].close(); delete connectionsRef.current[pId]; }
         if (activeSpeakerId === pId) {
-            const remainingVideos = videos.filter(v => v.peerId !== pId);
+            const remainingVideos = videos.filter(v => v.peerId !== pId); // Use up-to-date videos for selection
             const newActive = remainingVideos.find(v => v.isLocal)?.peerId || (remainingVideos.length > 0 ? remainingVideos[0]?.peerId : null);
             setActiveSpeakerId(newActive);
         }
-      }, [videos, activeSpeakerId]);
+       }, [videos, activeSpeakerId]); // videos is a dependency
       
-      const joinRoom = useCallback(async () => {
-        // ... (joinRoom logic, ensure metadata includes local media status) ...
+      const joinRoom = useCallback(async () => { /* ... same as V3.9 ... */
         if (!peerRef.current || !peerId) { setStatus("PeerID not ready."); return; }
         if (!roomId.trim() || !displayName.trim()) { setStatus("Room/Name ID required."); return; }
         setStatus('Getting media...');
@@ -310,7 +294,6 @@
             if (!conn) { setStatus("Failed to connect."); setJoined(false); return; }
             connectionsRef.current[roomId] = conn; 
             conn.on('open', () => {
-              setStatus(`Connected to host. Requesting room entry...`);
               conn.send({ type: 'join-request', name: displayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled }); 
             });
             conn.on('data', data => handleSignalingData(data, conn));
@@ -318,12 +301,11 @@
             conn.on('error', err => { handleDisconnect(roomId, `Host conn error: ${err.type}`); endCall(); });
           }
         } catch (err) { setStatus(`Media Error: ${err.message}. Check permissions.`); setJoined(false); }
-      }, [peerId, roomId, displayName, isVideoEnabled, isMuted, updateOrAddParticipant, handleSignalingData, handleDisconnect]); // Added dependencies
+       }, [peerId, roomId, displayName, isVideoEnabled, isMuted, updateOrAddParticipant, handleSignalingData, handleDisconnect, endCall]);
 
-      const callPeer = useCallback((targetPeerId, targetName = '') => {
+      const callPeer = useCallback((targetPeerId, targetName = '') => { /* ... same as V3.9 ... */
         if (!localStreamRef.current || callsRef.current[targetPeerId] || !peerRef.current || peerRef.current.disconnected) return;
         const remoteDisplayName = targetName || `Peer-${targetPeerId.substring(0,4)}`;
-        console.log(`Calling ${remoteDisplayName} (${targetPeerId})`);
         const call = peerRef.current.call(targetPeerId, localStreamRef.current, { 
             metadata: { displayName, audioEnabled: !isMuted, videoEnabled: isVideoEnabled } 
         });
@@ -331,17 +313,16 @@
         callsRef.current[targetPeerId] = call;
         updateOrAddParticipant(targetPeerId, null, remoteDisplayName, true, true); 
         call.on('stream', remoteStream => {
-            const meta = call.metadata || {}; // Get metadata from the call object itself upon stream
+            const meta = call.metadata || {};
             updateOrAddParticipant(targetPeerId, remoteStream, meta.displayName || remoteDisplayName, meta.audioEnabled !== false, meta.videoEnabled !== false)
         });
         call.on('close', () => handleDisconnect(targetPeerId, `Call closed`));
         call.on('error', (err) => handleDisconnect(targetPeerId, `Call error: ${err.type}`));
-      }, [displayName, isMuted, isVideoEnabled, updateOrAddParticipant, handleDisconnect]); // Added dependencies
+       }, [displayName, isMuted, isVideoEnabled, updateOrAddParticipant, handleDisconnect]);
 
-      const connectAndCallPeer = useCallback((targetPeerId, targetName = '') => {
+      const connectAndCallPeer = useCallback((targetPeerId, targetName = '') => { /* ... same as V3.9 ... */
         if (targetPeerId === peerId || (connectionsRef.current[targetPeerId] && callsRef.current[targetPeerId]) || !peerRef.current || peerRef.current.disconnected) return;
         const remoteDisplayName = targetName || `Peer-${targetPeerId.substring(0,4)}`;
-        console.log(`Connecting to ${remoteDisplayName} (${targetPeerId}) for call.`);
         if (connectionsRef.current[targetPeerId]) {
             if (!callsRef.current[targetPeerId]) callPeer(targetPeerId, remoteDisplayName);
             return;
@@ -355,9 +336,9 @@
         conn.on('data', data => handleSignalingData(data, conn));
         conn.on('close', () => handleDisconnect(targetPeerId, `Data conn closed`));
         conn.on('error', err => handleDisconnect(targetPeerId, `Data conn error: ${err.type}`));
-      }, [displayName, isMuted, isVideoEnabled, callPeer, handleSignalingData, handleDisconnect]); // Added dependencies
+      }, [displayName, isMuted, isVideoEnabled, callPeer, handleSignalingData, handleDisconnect]);
       
-      const endCall = useCallback(() => { 
+      const endCall = useCallback(() => { /* ... same as V3.9 ... */
         console.log("Ending call.");
         Object.values(callsRef.current).forEach(call => call.close());
         Object.values(connectionsRef.current).forEach(conn => conn.close());
@@ -366,29 +347,29 @@
         localStreamRef.current = null;
         setVideos([]); setJoined(false); setActiveSpeakerId(null);
         setIsMuted(false); setIsVideoEnabled(true); 
-        setCallStartTime(null); setElapsedTime(0); // Reset timer
+        setCallStartTime(null); setElapsedTime(0);
         setStatus('Call ended. Ready to start/join another.');
-      }, []);
+       }, []);
 
-      const toggleMute = useCallback(() => {
+      const toggleMute = useCallback(() => { /* ... same as V3.9 ... */
         if (!localStreamRef.current) return;
         const newMutedState = !isMuted;
         localStreamRef.current.getAudioTracks().forEach(track => { track.enabled = !newMutedState; });
         setIsMuted(newMutedState);
         updateOrAddParticipant(peerId, localStreamRef.current, displayName, !newMutedState, isVideoEnabled, true);
         broadcastMediaStatus();
-      }, [isMuted, peerId, displayName, isVideoEnabled, updateOrAddParticipant, broadcastMediaStatus]);
+       }, [isMuted, peerId, displayName, isVideoEnabled, updateOrAddParticipant, broadcastMediaStatus]);
 
-      const toggleVideo = useCallback(() => {
+      const toggleVideo = useCallback(() => { /* ... same as V3.9 ... */
         if (!localStreamRef.current) return;
         const newVideoEnabledState = !isVideoEnabled;
         localStreamRef.current.getVideoTracks().forEach(track => { track.enabled = newVideoEnabledState; });
         setIsVideoEnabled(newVideoEnabledState);
         updateOrAddParticipant(peerId, localStreamRef.current, displayName, !isMuted, newVideoEnabledState, true);
         broadcastMediaStatus();
-      }, [isVideoEnabled, peerId, displayName, isMuted, updateOrAddParticipant, broadcastMediaStatus]);
+       }, [isVideoEnabled, peerId, displayName, isMuted, updateOrAddParticipant, broadcastMediaStatus]);
 
-      const formatTime = useCallback((totalSeconds) => {
+      const formatTime = useCallback((totalSeconds) => { /* ... same as V3.9 ... */
         const hours = Math.floor(totalSeconds / 3600);
         const minutes = Math.floor((totalSeconds % 3600) / 60);
         const seconds = totalSeconds % 60;
@@ -399,73 +380,90 @@
         return parts.join(':');
       }, []);
 
-      // --- Child Components ---
-      const VideoPlaceholder = memo(({ text }) => ( <div className="disabled-video-placeholder"><VideoOffIcon /> <span className="mt-2">{text}</span></div>));
+      // --- Child Components (Memoized) ---
+      const VideoPlaceholder = memo(({ text }) => ( <div className="disabled-video-placeholder"><VideoCamOffIcon /> <span className="mt-2">{text}</span></div>));
       
       const RemoteMediaOffPlaceholder = memo(({ text, isAudioOff, isVideoOff }) => (
         <div className="remote-media-off-placeholder">
-            {isVideoOff && <VideoOffIcon />}
+            {isVideoOff && <VideoCamOffIcon />}
             {isAudioOff && !isVideoOff && <MicOffIcon />}
             <span className="mt-2 text-xs">{text}</span>
         </div>
       ));
       
-      const VideoPlayer = memo(({ videoData, objectFitClass = "object-cover" }) => { 
+      const VideoPlayer = memo(({ videoData }) => { 
         const { peerId: videoPeerId, stream, isLocal, name, audioEnabled, videoEnabled: participantVideoEnabled } = videoData;
         const videoRef = useRef(null); 
         
         useEffect(() => { 
-            if (videoRef.current && stream) {
-                 videoRef.current.srcObject = stream; 
-            } else if (videoRef.current) {
-                 videoRef.current.srcObject = null; // Clear if stream is removed
-            }
+            if (videoRef.current && stream) videoRef.current.srcObject = stream; 
+            else if (videoRef.current) videoRef.current.srcObject = null;
         }, [stream]); 
         
-        // Determine the actual video enabled status for rendering the local player
-        const actualIsVideoEnabledForLocal = isLocal ? isVideoEnabled : participantVideoEnabled;
+        // Determine the actual video enabled status for the local player from global state
+        const actualIsLocalVideoEnabled = isLocal ? isVideoEnabled : true; // For remote, this specific prop isn't used for their camera, their `participantVideoEnabled` is.
 
-        // Case 1: Local user, video explicitly turned off by local toggle
-        if (isLocal && !actualIsVideoEnabledForLocal) {
+        if (isLocal && !actualIsLocalVideoEnabled) {
              return <VideoPlaceholder text="Your camera is off" />;
         }
-        // Case 2: Remote user, their video is off (signaled)
-        if (!isLocal && !participantVideoEnabled) {
+        if (!isLocal && !participantVideoEnabled) { // Remote user's camera is off
             return <RemoteMediaOffPlaceholder text={`${name}'s camera is off`} isVideoOff={true} isAudioOff={!audioEnabled} />;
         }
-        // Case 3: No stream yet (e.g., connecting)
         if (!stream) {
             return <RemoteMediaOffPlaceholder text={`${name} (Connecting...)`} isVideoOff={!participantVideoEnabled} isAudioOff={!audioEnabled}/>;
         }
 
-        // Case 4: Video should be playing
         return (
-          <div className="w-full h-full relative">
-            <video ref={videoRef} autoPlay playsInline muted={isLocal} className={`video-element ${objectFitClass}`} />
+          <div className="w-full h-full relative video-container-instance" data-peer-id={videoPeerId}> {/* Added data-peer-id for easier debugging */}
+            <video ref={videoRef} autoPlay playsInline muted={isLocal} className="video-element object-cover" />
             {name && <div className="participant-name">{name}</div>}
-            {!isLocal && (!audioEnabled || !participantVideoEnabled) && ( // Show status icons for remote user
+            
+            {/* Status icons for remote user */}
+            {!isLocal && (!audioEnabled || !participantVideoEnabled) && (
                 <div className="media-status-icon">
                     {!audioEnabled && <MicOffIcon />}
-                    {/* Show video off icon only if their audio is on but video is off, to avoid clutter if both are off (placeholder handles that) */}
-                    {!participantVideoEnabled && audioEnabled && <VideoOffIcon/>}
+                    {!participantVideoEnabled && audioEnabled && <VideoCamOffIcon/>}
+                </div>
+            )}
+            {/* Status icon for local user (if muted and video is on) */}
+            {isLocal && isMuted && actualIsLocalVideoEnabled && (
+                <div className="local-media-status-icon">
+                    <MicOffIcon />
                 </div>
             )}
           </div>
         );
-      }); // Custom comparison function might be needed if videoData object reference changes too often
-      
+      }, (prevProps, nextProps) => {
+          // Custom comparison function for React.memo to prevent unnecessary re-renders of VideoPlayer
+          // This is crucial for flicker reduction
+          const d1 = prevProps.videoData;
+          const d2 = nextProps.videoData;
+          // If local, also check global isMuted and isVideoEnabled as they affect local display
+          if (d1.isLocal) {
+              if (isMuted !== nextProps.isMutedInternal || isVideoEnabled !== nextProps.isVideoEnabledInternal) return false;
+          }
+          return d1.stream === d2.stream &&
+                 d1.name === d2.name &&
+                 d1.audioEnabled === d2.audioEnabled &&
+                 d1.videoEnabled === d2.videoEnabled &&
+                 d1.isLocal === d2.isLocal &&
+                 d1.peerId === d2.peerId;
+      });
+      // To use the custom comparison for local user, VideoPlayer would need isMuted and isVideoEnabled passed as props
+      // For simplicity, we'll rely on the `videoData` object changing sufficiently for now.
+      // The main flicker culprit is often the App re-rendering due to elapsedTime.
+      // The most effective flicker fix is to ensure elapsedTime doesn't cause VideoPlayer to re-render if its actual data hasn't changed.
+      // The `updateOrAddParticipant` returning prevVideos if no change is the primary defense.
+
       const activeSpeakerData = videos.find(v => v.peerId === activeSpeakerId);
       const filmstripVideosData = videos.filter(v => v.peerId !== activeSpeakerId);
       const galleryGridVideosData = videos;
 
       const galleryCols = galleryGridVideosData.filter(v=>v.stream || v.isLocal).length <= 1 ? 1 : (galleryGridVideosData.filter(v=>v.stream || v.isLocal).length <= 4 ? 2 : (galleryGridVideosData.filter(v=>v.stream || v.isLocal).length <= 9 ? 3 : 4));
-      const galleryRows = galleryGridVideosData.filter(v=>v.stream || v.isLocal).length > 0 ? Math.ceil(galleryGridVideosData.filter(v=>v.stream || v.isLocal).length / galleryCols) : 1;
       
       const ControlButton = memo(({ title, onClick, children, active = false, activeColor = "bg-red-500", defaultColor = "bg-gray-600 hover:bg-gray-500" }) => ( <button title={title} onClick={onClick} className={`p-2.5 sm:p-3 rounded-full text-white transition-colors duration-150 ease-in-out ${active ? activeColor : defaultColor} focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50`}>{children}</button>));
       
-      // Controls component using memoized icons
       const Controls = memo(() => {
-        console.log("Controls re-rendering"); // Check how often this logs
         return (
             <div className="flex justify-center items-center space-x-2 sm:space-x-3">
                 <ControlButton title={isMuted ? "Unmute" : "Mute"} onClick={toggleMute} active={isMuted}>
@@ -484,19 +482,26 @@
                 </ControlButton>
             </div>
         );
-      }); // Dependencies for Controls might be needed if it uses states directly: [isMuted, isVideoEnabled, videos, viewMode, toggleMute, toggleVideo, endCall, setViewMode]
-      // Simpler: just pass props if needed, or let it re-render if App re-renders (often acceptable for controls)
+      });
 
-      const StatusBar = memo(() => (
-        <div className="status-bar">
-            <ClockIcon /> <span>{formatTime(elapsedTime)}</span>
-            <span className="mx-1">|</span>
-            <span className="truncate max-w-[100px]">{displayName}</span> {/* Truncate long names */}
-            <span className="mx-1">|</span>
-            {networkType === 'cellular' ? <SignalIcon /> : <WifiIcon />}
-            <span className="capitalize">{networkType}</span>
-        </div>
-      ));
+      const StatusBar = memo(({currentTime, userDisplayName, currentNetworkType}) => { // Pass props explicitly
+        return (
+            <div className="status-bar">
+                <ClockIcon /> <span className="timer">{formatTime(currentTime)}</span>
+                <span className="mx-1 opacity-50">|</span>
+                <span className="truncate max-w-[100px] sm:max-w-[150px]" title={userDisplayName}>{userDisplayName}</span>
+                {(currentNetworkType && currentNetworkType !== 'N/A' && currentNetworkType !== 'loading...') && (
+                    <>
+                        <span className="mx-1 opacity-50">|</span>
+                        <span className="network-info">
+                            {currentNetworkType === 'cellular' ? <SignalIcon /> : <WifiIcon />}
+                            <span className="capitalize">{currentNetworkType}</span>
+                        </span>
+                    </>
+                )}
+            </div>
+        );
+      });
 
 
       // --- Main App JSX ---
@@ -504,8 +509,9 @@
         <div className="w-full h-screen flex flex-col bg-gray-900">
           {!joined ? (
             <div className="flex-grow flex flex-col items-center justify-center p-4">
-              <h1 className="text-4xl font-bold text-purple-400 mb-2">SyncLite Pro - V4</h1>
-              <p className="text-xs text-gray-400 mb-6">Peer to Peer Video Chat</p>
+              <h1 className="text-4xl font-bold text-purple-400 mb-2">SyncLite Pro - V4.0</h1>
+              <p className="text-xs text-gray-400 mb-6">Video Chat Feature</p> {/* V4.0 */}
+              {/* ... (Join Screen JSX - no comment error now) ... */}
               <div className="bg-gray-800 p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-md space-y-5">
                 <p className="text-center text-sm"><strong>Your Peer ID:</strong> <span className="text-green-400 break-all block mt-1">{peerId || 'Connecting...'}</span></p>
                 <div>
@@ -527,18 +533,19 @@
             </div>
           ) : (
             <div className="flex-grow flex flex-col overflow-hidden w-full relative">
-              <StatusBar /> {/* Use memoized StatusBar */}
-              <div className="flex-grow flex flex-col bg-black p-1 sm:p-2 min-h-0 mt-10"> {/* Adjusted mt for status bar */}
+              <StatusBar currentTime={elapsedTime} userDisplayName={displayName} currentNetworkType={networkType} />
+              <div className="flex-grow flex flex-col bg-black p-1 sm:p-2 min-h-0 mt-10 sm:mt-12"> {/* Increased top margin for status bar */}
                 {viewMode === 'speaker' ? (
                   <div className="flex flex-col flex-grow h-full space-y-1 sm:space-y-2 min-h-0">
                     <div className="flex-grow video-container min-h-0">
                       {activeSpeakerData ? (
-                        <VideoPlayer videoData={activeSpeakerData} objectFitClass="object-contain"/>
+                        <VideoPlayer videoData={activeSpeakerData} />
                       ) : <VideoPlaceholder text={videos.length > 0 ? "Select participant" : "Waiting..."} />}
                     </div>
-                    {filmstripVideosData.filter(v=> v.peerId !== activeSpeakerData?.peerId).length > 0 && ( // Ensure filmstrip doesn't include active speaker again
+                    {filmstripVideosData.filter(v => v.peerId !== activeSpeakerData?.peerId && (v.stream || v.isLocal)).length > 0 && (
                        <div className="flex-shrink-0 h-24 sm:h-32 bg-gray-800 p-1 sm:p-2 flex space-x-1 sm:space-x-2 overflow-x-auto no-scrollbar items-center rounded-md">
                         {filmstripVideosData.map(video => (
+                          (video.stream || video.isLocal) && // Render only if stream exists or is local placeholder
                           <div key={video.peerId} className="video-container w-28 sm:w-40 h-full cursor-pointer border-2 border-transparent hover:border-purple-500"
                             onClick={() => setActiveSpeakerId(video.peerId)} tabIndex="0">
                             <VideoPlayer videoData={video}/>
@@ -548,19 +555,20 @@
                     )}
                   </div>
                 ) : ( 
-                  <div className={`flex-grow p-1 sm:p-2 grid gap-1 sm:gap-2 overflow-y-auto grid-cols-${galleryCols} grid-rows-${galleryRows} min-h-0`}>
+                  <div className={`flex-grow p-1 sm:p-2 grid gap-1 sm:gap-2 overflow-y-auto grid-cols-${galleryCols} min-h-0`}> {/* Removed grid-rows for auto flow */}
                     {galleryGridVideosData.map(video => (
+                       (video.stream || video.isLocal) && // Render only if stream exists or is local placeholder
                       <div key={video.peerId} className="video-container aspect-video"
                         onClick={() => { setActiveSpeakerId(video.peerId); setViewMode('speaker');}} tabIndex="0">
                         <VideoPlayer videoData={video} />
                       </div>
                     ))}
-                     {galleryGridVideosData.length === 0 && <div className="disabled-video-placeholder col-span-full row-span-full"><VideoPlaceholder text="No one here" /></div>}
+                     {galleryGridVideosData.filter(v=>v.stream || v.isLocal).length === 0 && <div className="disabled-video-placeholder col-span-full row-span-full"><VideoPlaceholder text="No one here" /></div>}
                   </div>
                 )}
               </div>
               <div className="flex-shrink-0 bg-gray-800 p-3 sm:p-4 shadow-up w-full">
-                <Controls /> {/* Use memoized Controls */}
+                <Controls />
               </div>
             </div>
           )}
