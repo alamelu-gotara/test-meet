@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-  <title>SyncLite Video Chat V3.2 - Audio/iOS Fixes</title>
+  <title>SyncLite Pro Video Chat - V3.3</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -13,524 +13,335 @@
   <style>
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .video-container {
+        position: relative;
+        background-color: #1a202c; /* Tailwind gray-900, slightly lighter than pure black */
+        overflow: hidden;
+        border-radius: 0.375rem; /* md */
+    }
+    .participant-name {
+        position: absolute;
+        bottom: 6px; /* Increased padding */
+        left: 6px;
+        background-color: rgba(0, 0, 0, 0.65);
+        color: white;
+        font-size: 0.7rem; /* Slightly smaller for better fit */
+        padding: 3px 8px; /* Increased padding */
+        border-radius: 0.25rem; /* sm */
+        max-width: calc(100% - 12px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        z-index: 10;
+    }
+    .video-element {
+        width: 100%;
+        height: 100%;
+        display: block;
+    }
+    .disabled-video-placeholder {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column; /* Stack icon and text */
+        align-items: center;
+        justify-content: center;
+        background-color: #2d3748; /* gray-800 */
+        color: #a0aec0; /* gray-500 */
+        font-size: 0.875rem; /* text-sm */
+    }
+    .shadow-up {
+        box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1), 0 -2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
   </style>
 </head>
 <body>
-  <div id="root" class="min-h-screen bg-gray-900 flex flex-col items-center p-2 sm:p-4 text-white"></div>
+  <div id="root" class="min-h-screen bg-gray-900 flex flex-col items-center text-white"></div>
 
   <script type="text/babel">
-    const { useState, useRef, useEffect } = React;
+    const { useState, useRef, useEffect, useCallback } = React;
 
     function App() {
       const [peerId, setPeerId] = useState('');
       const [roomId, setRoomId] = useState('');
       const [status, setStatus] = useState('Initializing...');
-      const [videos, setVideos] = useState([]); // {peerId, stream, isLocal}
+      const [videos, setVideos] = useState([]); 
       const [joined, setJoined] = useState(false);
       const [isMuted, setIsMuted] = useState(false);
       const [isVideoEnabled, setIsVideoEnabled] = useState(true);
 
-      const [viewMode, setViewMode] = useState('shared');
-      const [mainVideoPeerId, setMainVideoPeerId] = useState(null);
+      const [viewMode, setViewMode] = useState('speaker'); 
+      const [activeSpeakerId, setActiveSpeakerId] = useState(null); 
 
       const peerRef = useRef(null);
       const connectionsRef = useRef({});
       const callsRef = useRef({});
       const localStreamRef = useRef(null);
 
-      useEffect(() => {
-        console.log("Initializing PeerJS...");
+      const initializePeer = useCallback(() => {
         const newPeer = new Peer(undefined, {
-          host: '0.peerjs.com', // Default PeerJS cloud server
-          port: 443,
-          path: '/peerjs',
-          secure: true,
-          debug: 3, // Crucial for debugging connection issues, especially on iOS
+          host: '0.peerjs.com', port: 443, path: '/peerjs', secure: true, debug: 2,
         });
         peerRef.current = newPeer;
 
         newPeer.on('open', id => {
-          console.log('PeerJS opened. Peer ID:', id);
           setPeerId(id);
-          setStatus('Ready. Share your Peer ID or enter a Room ID to join.');
+          setActiveSpeakerId(id); 
+          setStatus('Ready. Share your Peer ID or enter Room ID.');
         });
-
         newPeer.on('connection', conn => {
-          console.log('Incoming data connection from', conn.peer);
           connectionsRef.current[conn.peer] = conn;
           conn.on('data', data => handleSignalingData(data, conn));
           conn.on('close', () => handleDisconnect(conn.peer, 'Data connection closed'));
-          conn.on('error', err => {
-            console.error('Data connection error with', conn.peer, err);
-            handleDisconnect(conn.peer, `Data connection error: ${err.type || err.message}`);
-          });
+          conn.on('error', err => handleDisconnect(conn.peer, `Data connection error: ${err.type || err.message}`));
         });
-
         newPeer.on('call', call => {
-          console.log('Incoming call from', call.peer);
-          if (localStreamRef.current) {
-            console.log('Answering call from', call.peer, 'with local stream.');
-            call.answer(localStreamRef.current);
-          } else {
-            console.warn('Received call from', call.peer, 'but local stream is not ready. Call not answered.');
-            // Optionally, you could queue the call or try to get media again, but it's safer if media is ready.
-            return; // Do not proceed if local stream isn't available
-          }
-          
-          call.on('stream', remoteStream => {
-            console.log('Received remote stream from', call.peer);
-            addVideo(call.peer, remoteStream, false);
-          });
+          if (localStreamRef.current) call.answer(localStreamRef.current);
+          else { console.warn('Call received, no local stream.'); return; }
+          call.on('stream', remoteStream => addVideo(call.peer, remoteStream, false));
           callsRef.current[call.peer] = call;
           call.on('close', () => handleDisconnect(call.peer, 'Call closed'));
-          call.on('error', (err) => {
-            console.error('Call error with', call.peer, err);
-            handleDisconnect(call.peer, `Call error: ${err.type || err.message}`);
-          });
+          call.on('error', (err) => handleDisconnect(call.peer, `Call error: ${err.type || err.message}`));
         });
-
-        newPeer.on('disconnected', () => {
-          console.warn('PeerJS disconnected from signaling server.');
-          setStatus('Disconnected from PeerJS server. Attempting to reconnect...');
-          // PeerJS attempts to reconnect automatically.
-        });
-        newPeer.on('error', err => {
-          console.error('PeerJS general error:', err);
-          setStatus(`PeerJS Error: ${err.type} - ${err.message || 'Unknown PeerJS error'}`);
-           if (err.type === 'unavailable-id' && roomId) {
-             setStatus(`Error: Room Host ID (${roomId}) is not available. Check ID and host status.`);
-           } else if (err.type === 'peer-unavailable') {
-             const unavailablePeerId = err.message.match(/peer\s(.*?)$/)?.[1];
-             setStatus(`Error: Peer ${unavailablePeerId || ''} is unavailable.`);
-           } else if (err.type === 'network') {
-             setStatus('Network error. Could not connect to PeerJS server. Check internet connection.');
-           } else if (err.type === 'webrtc') {
-             setStatus('WebRTC connection error. This might be a browser or network issue.');
-           }
-        });
-
-        return () => {
-          console.log('Cleaning up: Closing streams and destroying PeerJS instance.');
-          if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(track => track.stop());
-            localStreamRef.current = null;
-          }
-          if (peerRef.current) {
-            peerRef.current.destroy();
-            peerRef.current = null;
-          }
-          Object.values(callsRef.current).forEach(call => call?.close());
-          Object.values(connectionsRef.current).forEach(conn => conn?.close());
-          callsRef.current = {};
-          connectionsRef.current = {};
-        };
+        newPeer.on('disconnected', () => setStatus('Disconnected from PeerJS. Reconnecting...'));
+        newPeer.on('error', err => setStatus(`PeerJS Error: ${err.type} - ${err.message || 'Unknown'}`));
       }, []);
 
       useEffect(() => {
-        if (!joined) return;
-        const currentMainVideoExists = videos.some(v => v.peerId === mainVideoPeerId);
-        if (mainVideoPeerId && !currentMainVideoExists) {
-          if (videos.length > 0) {
-            const localVideo = videos.find(v => v.isLocal);
-            setMainVideoPeerId(localVideo ? localVideo.peerId : videos[0].peerId);
-          } else {
-            setMainVideoPeerId(null);
-          }
-        } else if (!mainVideoPeerId && videos.length > 0) {
-          const localVideo = videos.find(v => v.isLocal);
-          setMainVideoPeerId(localVideo ? localVideo.peerId : videos[0].peerId);
-          if (viewMode !== 'shared') setViewMode('shared');
-        }
-        if (videos.length === 1 && viewMode !== 'shared') {
-          setViewMode('shared'); // Ensure shared view if only one participant
-        }
-      }, [videos, mainVideoPeerId, joined, viewMode]);
+        initializePeer();
+        return () => {
+          localStreamRef.current?.getTracks().forEach(track => track.stop());
+          peerRef.current?.destroy();
+          Object.values(callsRef.current).forEach(call => call?.close());
+          Object.values(connectionsRef.current).forEach(conn => conn?.close());
+        };
+      }, [initializePeer]);
 
-      function handleSignalingData(data, conn) {
-        console.log('Received signaling data:', data, 'from', conn.peer);
+      useEffect(() => {
+        if (!joined) return;
+        const activeSpeakerStillExists = videos.some(v => v.peerId === activeSpeakerId);
+        if (activeSpeakerId && !activeSpeakerStillExists) {
+          setActiveSpeakerId(videos.find(v => v.isLocal)?.peerId || videos[0]?.peerId || null);
+        } else if (!activeSpeakerId && videos.length > 0) {
+          setActiveSpeakerId(videos.find(v => v.isLocal)?.peerId || videos[0]?.peerId);
+        }
+        if (videos.length <= 1 && viewMode === 'gallery') setViewMode('speaker');
+
+      }, [videos, activeSpeakerId, joined, peerId, viewMode]);
+
+      const handleSignalingData = (data, conn) => {
         switch (data.type) {
-          case 'join-room': // Received by host from a new joiner
-            const currentPeersInRoom = Object.keys(callsRef.current);
-            console.log(`Peer ${conn.peer} wants to join. Current peers in room: ${currentPeersInRoom.join(', ')}`);
-            conn.send({ type: 'peer-list', peers: currentPeersInRoom });
-            
-            Object.values(connectionsRef.current).forEach(existingConn => {
-              if (existingConn.peer !== conn.peer && existingConn.open) {
-                existingConn.send({ type: 'new-peer', peerId: conn.peer });
-              }
+          case 'join-room': 
+            conn.send({ type: 'peer-list', peers: Object.keys(callsRef.current) });
+            Object.values(connectionsRef.current).forEach(c => {
+              if (c.peer !== conn.peer && c.open) c.send({ type: 'new-peer', peerId: conn.peer });
             });
-            if (localStreamRef.current && !callsRef.current[conn.peer]) {
-                callPeer(conn.peer);
-            } else {
-                console.warn("Cannot call new peer, local stream or connection issue.");
-            }
+            if (localStreamRef.current && !callsRef.current[conn.peer]) callPeer(conn.peer);
             break;
-          case 'peer-list': // Received by joiner from host
-            console.log('Received peer list:', data.peers);
+          case 'peer-list': 
             data.peers.forEach(pid => {
-              if (pid !== peerId && !callsRef.current[pid] && !connectionsRef.current[pid]) {
-                connectAndCallPeer(pid);
-              }
+              if (pid !== peerId && !callsRef.current[pid] && !connectionsRef.current[pid]) connectAndCallPeer(pid);
             });
             break;
-          case 'new-peer': // Received by existing peers when a new peer joins
-            console.log('New peer announced:', data.peerId);
+          case 'new-peer': 
             if (data.peerId !== peerId && !callsRef.current[data.peerId] && !connectionsRef.current[data.peerId]) {
               connectAndCallPeer(data.peerId);
             }
             break;
-          default:
-            console.log('Unknown signaling data type:', data.type);
         }
-      }
+      };
 
-      function addVideo(pId, stream, isLocal = false) {
-        console.log(`${isLocal ? 'Local' : 'Remote'} video added for peer: ${pId}`, stream);
-        // Log tracks for debugging audio/video issues
-        stream.getTracks().forEach(track => {
-            console.log(`  Track kind: ${track.kind}, enabled: ${track.enabled}, id: ${track.id}`);
-        });
+      const addVideo = (pId, stream, isLocal = false) => {
+        setVideos(prev => prev.some(v => v.peerId === pId) ? prev.map(v => v.peerId === pId ? { ...v, stream } : v) : [...prev, { peerId: pId, stream, isLocal }]);
+      };
 
-        setVideos(prevVideos => {
-          if (prevVideos.some(v => v.peerId === pId)) {
-            console.log('Video for peer', pId, 'already exists. Updating stream if necessary.');
-            // Optional: update stream if it's different, useful for track changes. For now, just return.
-            return prevVideos.map(v => v.peerId === pId ? { ...v, stream } : v);
-          }
-          return [...prevVideos, { peerId: pId, stream, isLocal }];
-        });
-      }
+      const handleDisconnect = (pId, reason = "Unknown") => {
+        setVideos(prev => prev.filter(v => v.peerId !== pId));
+        callsRef.current[pId]?.close(); delete callsRef.current[pId];
+        connectionsRef.current[pId]?.close(); delete connectionsRef.current[pId];
+        console.log(`Peer ${pId} disconnected: ${reason}`);
+      };
 
-      function handleDisconnect(pId, reason = "Unknown reason") {
-        console.log(`Handling disconnect for peer: ${pId}. Reason: ${reason}`);
-        setVideos(prevVideos => prevVideos.filter(v => v.peerId !== pId));
-
-        if (callsRef.current[pId]) {
-          callsRef.current[pId].close();
-          delete callsRef.current[pId];
-        }
-        if (connectionsRef.current[pId]) {
-          connectionsRef.current[pId].close();
-          delete connectionsRef.current[pId];
-        }
-         if (mainVideoPeerId === pId) {
-             setMainVideoPeerId(null); // Let useEffect handle new main video selection
-         }
-      }
-
-      async function joinRoom() {
-        if (!roomId.trim()) {
-          setStatus("Please enter a Room ID or your own Peer ID to host.");
-          return;
-        }
-        setStatus('Starting camera and microphone...');
+      const joinRoom = async () => {
+        if (!roomId.trim()) { setStatus("Room ID required."); return; }
+        setStatus('Getting media...');
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: true, 
-            audio: { echoCancellation: true, noiseSuppression: true } // More robust audio
+            video: true, audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
           });
-          console.log('Local media stream obtained:', stream);
           localStreamRef.current = stream;
-          stream.getVideoTracks().forEach(track => track.enabled = isVideoEnabled);
-          stream.getAudioTracks().forEach(track => track.enabled = !isMuted);
-
+          stream.getVideoTracks().forEach(t => t.enabled = isVideoEnabled);
+          stream.getAudioTracks().forEach(t => t.enabled = !isMuted);
           addVideo(peerId, stream, true);
-          setMainVideoPeerId(peerId);
-          setViewMode('shared');
           setJoined(true);
-          setStatus('Connecting to room...');
+          setStatus('Joining room...');
 
-          if (roomId !== peerId) { // Joining an existing room
-            setMainVideoPeerId(roomId); // Assume host's video will be main initially
-            console.log('Attempting to connect to host:', roomId);
+          if (roomId !== peerId) { 
             const conn = peerRef.current.connect(roomId);
-            if (!conn) {
-              setStatus('Failed to initiate connection to host. Peer object might not be ready.');
-              setJoined(false);
-              return;
-            }
+            if (!conn) { setStatus('Failed to connect to host.'); setJoined(false); return; }
             connectionsRef.current[roomId] = conn;
             conn.on('open', () => {
-              console.log('Data connection to host opened:', roomId);
-              setStatus(`Connected to room ${roomId}. Waiting for others...`);
+              setStatus(`Connected to room. Others can join.`);
               conn.send({ type: 'join-room', peerId });
             });
             conn.on('data', data => handleSignalingData(data, conn));
-            conn.on('close', () => {
-              setStatus(`Disconnected from host ${roomId}.`);
-              handleDisconnect(roomId, 'Host data connection closed');
-            });
-            conn.on('error', err => {
-              console.error('Connection to host error', err);
-              setStatus(`Error connecting to host ${roomId}: ${err.type || err.message}`);
-              handleDisconnect(roomId, `Host connection error: ${err.type || err.message}`);
-              setJoined(false); // Could fail to join
-            });
-          } else { // Hosting a new room
-            setStatus(`Hosting room ${peerId}. Share your Peer ID for others to join.`);
-            console.log(`Hosting room with ID: ${peerId}`);
+            conn.on('close', () => { setStatus(`Disconnected from host.`); handleDisconnect(roomId, 'Host connection closed'); });
+            conn.on('error', err => { setStatus(`Host connection error.`); handleDisconnect(roomId, `Host conn error: ${err.type}`); setJoined(false); });
+          } else { 
+            setStatus(`Hosting room. Share your ID.`);
           }
         } catch (err) {
-          console.error('Failed to get local stream:', err);
-          setStatus(`Error: ${err.name} - ${err.message}. Check camera/mic permissions.`);
-          if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(track => track.stop());
-            localStreamRef.current = null;
-          }
+          setStatus(`Media Error: ${err.name}. Check permissions.`);
+          localStreamRef.current?.getTracks().forEach(t => t.stop());
           setJoined(false);
         }
-      }
+      };
       
-      function callPeer(targetPeerId) {
-        if (!localStreamRef.current) {
-            console.warn("Local stream not available to make call to", targetPeerId);
-            return;
-        }
-        if (callsRef.current[targetPeerId]) {
-            console.log("Already have an active call or call attempt with", targetPeerId);
-            return;
-        }
-        console.log('Calling peer:', targetPeerId);
+      const callPeer = (targetPeerId) => {
+        if (!localStreamRef.current || callsRef.current[targetPeerId]) return;
         const call = peerRef.current.call(targetPeerId, localStreamRef.current);
-        if (!call) {
-            console.error("Failed to initiate call to", targetPeerId, ". Peer object might not be ready or peer ID invalid.");
-            setStatus(`Failed to call ${targetPeerId.substring(0,6)}`);
-            return;
-        }
+        if (!call) { console.error("Failed to call", targetPeerId); return; }
         callsRef.current[targetPeerId] = call;
-        call.on('stream', remoteStream => {
-          console.log('Received stream from outgoing call to', targetPeerId);
-          addVideo(targetPeerId, remoteStream, false);
-        });
-        call.on('close', () => handleDisconnect(targetPeerId, `Outgoing call to ${targetPeerId} closed`));
-        call.on('error', (err) => {
-            console.error('Outgoing call error with', targetPeerId, err);
-            handleDisconnect(targetPeerId, `Outgoing call error with ${targetPeerId}: ${err.type || err.message}`);
-        });
-      }
+        call.on('stream', remoteStream => addVideo(targetPeerId, remoteStream, false));
+        call.on('close', () => handleDisconnect(targetPeerId, `Call to ${targetPeerId} closed`));
+        call.on('error', (err) => handleDisconnect(targetPeerId, `Call error ${targetPeerId}: ${err.type}`));
+      };
 
-      function connectAndCallPeer(targetPeerId) {
-        if (targetPeerId === peerId || connectionsRef.current[targetPeerId] || callsRef.current[targetPeerId]) {
-          console.log('Skipping connect/call to self or already connected/called peer:', targetPeerId);
-          return;
-        }
-        console.log('Connecting to new peer for signaling then calling:', targetPeerId);
+      const connectAndCallPeer = (targetPeerId) => {
+        if (targetPeerId === peerId || connectionsRef.current[targetPeerId] || callsRef.current[targetPeerId]) return;
         const conn = peerRef.current.connect(targetPeerId);
-         if (!conn) {
-            console.error("Failed to initiate data connection to new peer", targetPeerId);
-            setStatus(`Failed to connect to ${targetPeerId.substring(0,6)}`);
-            return;
-        }
+        if (!conn) { console.error("Failed to connect to new peer", targetPeerId); return; }
         connectionsRef.current[targetPeerId] = conn;
-        conn.on('open', () => {
-          console.log('Signaling connection established with new peer:', targetPeerId, '. Now calling.');
-          callPeer(targetPeerId);
-        });
+        conn.on('open', () => callPeer(targetPeerId));
         conn.on('data', data => handleSignalingData(data, conn));
-        conn.on('close', () => handleDisconnect(targetPeerId, `Data connection with ${targetPeerId} closed`));
-        conn.on('error', err => {
-            console.error('Signaling connection error with new peer', targetPeerId, err);
-            handleDisconnect(targetPeerId, `Data connection error with ${targetPeerId}: ${err.type || err.message}`);
-        });
-      }
+        conn.on('close', () => handleDisconnect(targetPeerId, `Data conn with ${targetPeerId} closed`));
+        conn.on('error', err => handleDisconnect(targetPeerId, `Data conn error ${targetPeerId}: ${err.type}`));
+      };
 
-      function toggleMute() {
-        if (localStreamRef.current) {
-          const audioTracks = localStreamRef.current.getAudioTracks();
-          if (audioTracks.length > 0) {
-            const currentMuteState = !audioTracks[0].enabled;
-            audioTracks[0].enabled = currentMuteState;
-            setIsMuted(!currentMuteState);
-            console.log('Toggled mute. Mic enabled:', audioTracks[0].enabled);
-          }
-        }
-      }
+      const toggleMute = () => {
+        localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !t.enabled; setIsMuted(!t.enabled); });
+      };
+      const toggleVideo = () => {
+        localStreamRef.current?.getVideoTracks().forEach(t => { t.enabled = !t.enabled; setIsVideoEnabled(!t.enabled); });
+      };
 
-      function toggleVideo() {
-        if (localStreamRef.current) {
-          const videoTracks = localStreamRef.current.getVideoTracks();
-          if (videoTracks.length > 0) {
-            const newVideoState = !isVideoEnabled;
-            videoTracks[0].enabled = newVideoState;
-            setIsVideoEnabled(newVideoState);
-            console.log('Toggled video. Camera enabled:', videoTracks[0].enabled);
-          }
-        }
-      }
+      const getParticipantName = (pId, isLocal) => isLocal ? `You (${pId.substring(0, 6)})` : `Peer (${pId.substring(0, 6)})`;
 
-      const mainVideo = videos.find(v => v.peerId === mainVideoPeerId);
-      const thumbnailVideos = videos.filter(v => v.peerId !== mainVideoPeerId);
-      const remotePeersForDisplay = videos.filter(v => !v.isLocal).map(v => v.peerId.substring(0, 6)).join(', ');
+      const VideoPlaceholder = ({ text }) => (
+        <div className="disabled-video-placeholder">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1zM1.5 6L0 7.5L3 10.5L1.5 12L0 13.5L3 16.5L4.5 15L3 13.5L4.5 12L3 10.5L4.5 9L1.5 6zM22.5 6L24 7.5L21 10.5L22.5 12L24 13.5L21 16.5L19.5 15L21 13.5L19.5 12L21 10.5L19.5 9L22.5 6z" />
+            </svg>
+            {text}
+        </div>
+      );
+
+      const VideoPlayer = ({ stream, isLocal, isVideoActuallyEnabled, objectFitClass = "object-cover" }) => {
+        const videoRef = useRef(null);
+        useEffect(() => { if (videoRef.current && stream) videoRef.current.srcObject = stream; }, [stream]);
+        if (isLocal && !isVideoActuallyEnabled) return <VideoPlaceholder text="Your video is off" />;
+        return <video ref={videoRef} autoPlay playsInline muted={isLocal} className={`video-element ${objectFitClass}`} />;
+      };
       
-      const isOnlyOneOverall = videos.length <= 1; // Used for layout: if 0 or 1 video, main area is 100%
+      const activeSpeakerVideo = videos.find(v => v.peerId === activeSpeakerId);
+      const filmstripVideos = videos.filter(v => v.peerId !== activeSpeakerId);
+      // Determine grid columns based on number of videos for Gallery View
+      const galleryCols = videos.length <= 1 ? 1 : (videos.length <= 4 ? 2 : (videos.length <= 9 ? 3 : 4));
+
 
       return (
-        <div className="w-full max-w-3xl mx-auto bg-gray-800 shadow-lg rounded-lg p-4 sm:p-6 flex flex-col" style={{height: "calc(100vh - 2rem)", maxHeight: "900px" }}>
-          <h1 className="text-2xl sm:text-3xl font-bold text-purple-400 mb-3 text-center">SyncLite Video Chat</h1>
-          
-          {!joined && (
-            <>
-              <div className="bg-gray-700 p-3 rounded mb-4 text-xs sm:text-sm space-y-1">
-                <p><strong>Your Peer ID:</strong> <span className="text-green-400 break-all">{peerId || 'Initializing...'}</span></p>
-                <p><strong>Status:</strong> {status}</p>
-              </div>
-              <div className="mb-4 space-y-3">
-                <input
-                  className="border p-3 w-full rounded bg-gray-700 text-white placeholder-gray-400"
-                  placeholder="Enter Room Host Peer ID (or your ID to host)"
-                  value={roomId}
-                  onChange={e => setRoomId(e.target.value)}
-                  disabled={!peerId}
-                />
-                <button
-                  onClick={joinRoom}
-                  className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-4 rounded w-full font-semibold disabled:bg-gray-500"
-                  disabled={!peerId || !roomId.trim()}
-                >
+        <div className="w-full h-screen flex flex-col bg-gray-900"> {/* Changed from gray-800 */}
+          {!joined ? (
+            <div className="flex-grow flex flex-col items-center justify-center p-4">
+              <h1 className="text-4xl font-bold text-purple-400 mb-8">SyncLite Pro - V3.3</h1>
+              <div className="bg-gray-800 p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-lg space-y-6">
+                <p className="text-center text-sm"><strong>Your Peer ID:</strong> <span className="text-green-400 break-all block mt-1">{peerId || 'Initializing...'}</span></p>
+                 <p className="text-center text-xs text-gray-400">{status}</p>
+                <div>
+                  <label htmlFor="roomIdInput" className="block text-sm font-medium text-gray-300 mb-1">Room ID</label>
+                  <input id="roomIdInput" className="border-transparent p-3 w-full rounded-md bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    placeholder="Enter Room ID or your ID to host" value={roomId} onChange={e => setRoomId(e.target.value)} disabled={!peerId} />
+                </div>
+                <button onClick={joinRoom} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-4 rounded-md w-full font-semibold disabled:opacity-50 transition-all duration-150 ease-in-out"
+                  disabled={!peerId || !roomId.trim()}>
                   {roomId === peerId ? 'Start & Host Chat' : 'Join Chat Room'}
                 </button>
               </div>
-            </>
-          )}
-
-          {joined && (
-            <>
-              <div className="bg-gray-700 p-2 rounded mb-3 text-xs space-y-1">
-                <p><strong>Status:</strong> {status}</p>
-                <p><strong>My ID:</strong> <span className="text-green-400">{peerId.substring(0,6)}</span>
-                  {isMuted ? <span className="text-red-400"> (Mic Off)</span> : <span className="text-green-400"> (Mic On)</span>}
-                  {!isVideoEnabled ? <span className="text-yellow-400"> (Cam Off)</span> : <span className="text-blue-400"> (Cam On)</span>}
-                </p>
-                <p><strong>In Room:</strong> {roomId.substring(0,6)} {roomId === peerId ? "(Hosting)" : ""}</p>
-                <p><strong>Remote Peers:</strong> {remotePeersForDisplay || 'None'}</p>
-              </div>
-
-              <div className="flex flex-col flex-grow overflow-hidden bg-gray-900 rounded-md">
-                {viewMode === 'shared' && mainVideo ? (
-                  <div className="flex flex-col h-full">
-                    <div className="relative bg-black" style={{ height: isOnlyOneOverall ? '100%' : '65%' }}>
-                      { (mainVideo.isLocal && !isVideoEnabled) ? (
-                        <div className="w-full h-full flex items-center justify-center bg-black text-gray-400">Your Video Disabled</div>
-                      ) : (
-                        <video
-                          key={mainVideo.peerId + (mainVideo.isLocal && !isVideoEnabled ? '-disabled' : '')} // Add to key to force re-render if necessary
-                          autoPlay
-                          playsInline
-                          muted={mainVideo.isLocal} // Only mute local video to prevent echo
-                          ref={el => { if (el) el.srcObject = mainVideo.stream; }}
-                          className="w-full h-full object-contain"
-                        />
-                      )}
-                      <span className="absolute bottom-2 left-2 bg-black bg-opacity-60 text-white text-xs px-2 py-1 rounded">
-                        {mainVideo.isLocal ? `You (${mainVideo.peerId.substring(0,6)})` : mainVideo.peerId.substring(0,6)}
-                        {mainVideo.isLocal && isMuted ? ' (Muted)' : ''}
-                        {mainVideo.isLocal && !isVideoEnabled ? ' (Cam Off)' : ''}
-                      </span>
+            </div>
+          ) : (
+            <div className="flex-grow flex flex-col overflow-hidden">
+              <div className="flex-grow flex flex-col relative bg-black p-1 sm:p-2"> {/* Added padding */}
+                {viewMode === 'speaker' ? (
+                  <div className="flex flex-col flex-grow h-full space-y-1 sm:space-y-2"> {/* Added space */}
+                    <div className="flex-grow video-container">
+                      {activeSpeakerVideo ? (
+                        <>
+                          <VideoPlayer stream={activeSpeakerVideo.stream} isLocal={activeSpeakerVideo.isLocal}
+                            isVideoActuallyEnabled={activeSpeakerVideo.isLocal ? isVideoEnabled : true} objectFitClass="object-contain"/>
+                          <div className="participant-name">{getParticipantName(activeSpeakerVideo.peerId, activeSpeakerVideo.isLocal)}</div>
+                        </>
+                      ) : <VideoPlaceholder text="No active speaker" />}
                     </div>
-                    
-                    {/* Thumbnails Area: Only show if NOT onlyOneOverall AND there are actual thumbnails */}
-                    {!isOnlyOneOverall && thumbnailVideos.length > 0 && (
-                      <div
-                        className="flex flex-row gap-2 p-2 overflow-x-auto overflow-y-hidden bg-gray-700 no-scrollbar"
-                        style={{ height: '35%', alignItems: 'center' }}
-                      >
-                        {thumbnailVideos.map(video => (
-                          <div
-                            key={video.peerId + (video.isLocal && !isVideoEnabled ? '-disabled' : '')}
-                            className="relative cursor-pointer rounded overflow-hidden shadow-lg"
-                            onClick={() => setMainVideoPeerId(video.peerId)}
-                            style={{ flexShrink: 0, width: '120px', height: '90px' }}
-                          >
-                             { (video.isLocal && !isVideoEnabled) ? (
-                                <div className="w-full h-full flex items-center justify-center bg-black text-gray-400 text-xs">Video Off</div>
-                              ) : (
-                                <video
-                                  autoPlay
-                                  playsInline
-                                  muted={video.isLocal} // Crucial: only mute local video thumbnail
-                                  ref={el => { if (el) el.srcObject = video.stream; }}
-                                  className="w-full h-full object-cover bg-black"
-                                />
-                              )}
-                            <span className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
-                              {video.isLocal ? `You (${video.peerId.substring(0,6)})` : video.peerId.substring(0,6)}
-                              {video.isLocal && !isVideoEnabled ? ' (Cam Off)' : ''}
-                            </span>
+                    {videos.length > 1 && (
+                       <div className="flex-shrink-0 h-24 sm:h-32 bg-gray-800 p-1 sm:p-2 flex space-x-1 sm:space-x-2 overflow-x-auto no-scrollbar items-center rounded-md">
+                        {filmstripVideos.map(video => (
+                          <div key={video.peerId} className="video-container w-28 sm:w-40 h-full cursor-pointer border-2 border-transparent hover:border-purple-500 focus:border-purple-600"
+                            onClick={() => setActiveSpeakerId(video.peerId)} tabIndex="0">
+                            <VideoPlayer stream={video.stream} isLocal={video.isLocal} isVideoActuallyEnabled={video.isLocal ? isVideoEnabled : true}/>
+                            <div className="participant-name">{getParticipantName(video.peerId, video.isLocal)}</div>
                           </div>
                         ))}
                       </div>
                     )}
-                    {/* Placeholder if multiple participants expected, but no thumbnails (e.g., only main video exists out of multiple) */}
-                     {!isOnlyOneOverall && thumbnailVideos.length === 0 && videos.length > 1 && (
-                         <div className="h-[35%] flex items-center justify-center text-gray-500 text-sm bg-gray-700">
-                             <p>No other participants in thumbnail view.</p>
-                         </div>
-                     )}
                   </div>
-                ) : viewMode === 'grid' && videos.length > 0 ? (
-                  <div className="flex-grow grid grid-cols-1 sm:grid-cols-2 gap-2 p-2 overflow-y-auto">
+                ) : ( 
+                  <div className={`flex-grow p-1 sm:p-2 grid gap-1 sm:gap-2 overflow-y-auto grid-cols-${galleryCols}`}>
                     {videos.map(video => (
-                      <div
-                        key={video.peerId + (video.isLocal && !isVideoEnabled ? '-disabled' : '')}
-                        className="relative cursor-pointer rounded overflow-hidden shadow-lg bg-black aspect-[4/3]"
-                        onClick={() => {
-                          setMainVideoPeerId(video.peerId);
-                          setViewMode('shared');
-                        }}
-                      >
-                        { (video.isLocal && !isVideoEnabled) ? (
-                          <div className="w-full h-full flex items-center justify-center bg-black text-gray-400">Video Disabled</div>
-                        ) : (
-                          <video
-                            autoPlay
-                            playsInline
-                            muted={video.isLocal} // Only mute local video in grid
-                            ref={el => { if (el) el.srcObject = video.stream; }}
-                            className="w-full h-full object-cover"
-                          />
-                        )}
-                        <span className="absolute bottom-2 left-2 bg-black bg-opacity-60 text-white text-xs px-2 py-1 rounded">
-                          {video.isLocal ? `You (${video.peerId.substring(0,6)})` : video.peerId.substring(0,6)}
-                          {video.isLocal && isMuted ? ' (Muted)' : ''}
-                          {video.isLocal && !isVideoEnabled ? ' (Cam Off)' : ''}
-                        </span>
+                      <div key={video.peerId} className="video-container cursor-pointer border-2 border-transparent hover:border-purple-500 focus:border-purple-600 aspect-video"
+                        onClick={() => { setActiveSpeakerId(video.peerId); setViewMode('speaker');}} tabIndex="0">
+                        <VideoPlayer stream={video.stream} isLocal={video.isLocal} isVideoActuallyEnabled={video.isLocal ? isVideoEnabled : true} />
+                        <div className="participant-name">{getParticipantName(video.peerId, video.isLocal)}</div>
                       </div>
                     ))}
+                     {videos.length === 0 && <div className="disabled-video-placeholder col-span-full row-span-full"><VideoPlaceholder text="No one is here" /></div>}
                   </div>
-                ) : (
-                   <div className="flex-grow flex items-center justify-center text-gray-400">
-                       <p>{videos.length === 0 ? "Waiting for participants..." : (mainVideo ? "Main video selected" : "No participants or main video.")}</p>
-                   </div>
                 )}
               </div>
 
-              <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
-                <button
-                  onClick={toggleMute}
-                  className={`py-2 px-3 text-xs sm:text-sm rounded font-semibold flex-1 ${isMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} text-white`}
-                >
-                  {isMuted ? 'Unmute Mic' : 'Mute Mic'}
-                </button>
-                <button
-                  onClick={toggleVideo}
-                  className={`py-2 px-3 text-xs sm:text-sm rounded font-semibold flex-1 ${!isVideoEnabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-blue-600 hover:bg-blue-700'} text-white`}
-                >
-                  {isVideoEnabled ? 'Disable Video' : 'Enable Video'}
-                </button>
+              <div className="flex-shrink-0 bg-gray-800 p-3 sm:p-4 flex justify-center items-center space-x-3 sm:space-x-4 shadow-up">
+                <ControlButton title={isMuted ? "Unmute" : "Mute"} onClick={toggleMute} active={isMuted} activeColor="bg-red-600">
+                  {isMuted ? MicOffIcon : MicOnIcon}
+                </ControlButton>
+                <ControlButton title={isVideoEnabled ? "Cam Off" : "Cam On"} onClick={toggleVideo} active={!isVideoEnabled} activeColor="bg-red-600">
+                  {isVideoEnabled ? VideoOnIcon : VideoOffIcon}
+                </ControlButton>
                 {videos.length > 1 && (
-                  <button
-                    onClick={() => setViewMode(prev => prev === 'grid' ? 'shared' : 'grid')}
-                    className="py-2 px-3 text-xs sm:text-sm rounded font-semibold bg-indigo-600 hover:bg-indigo-700 text-white flex-1 sm:col-start-3" // Ensure it takes full width on sm if it's the 3rd item
-                  >
-                    {viewMode === 'grid' ? 'Shared View' : 'Grid View'}
-                  </button>
+                  <ControlButton title={viewMode === 'gallery' ? "Speaker View" : "Gallery View"} 
+                                 onClick={() => setViewMode(prev => prev === 'gallery' ? 'speaker' : 'gallery')}>
+                    {viewMode === 'gallery' ? SpeakerLayoutIcon : GalleryLayoutIcon}
+                  </ControlButton>
                 )}
               </div>
-            </>
+            </div>
           )}
         </div>
       );
     }
+    
+    const ControlButton = ({ title, onClick, children, active = false, activeColor = "bg-red-500" }) => (
+      <button title={title} onClick={onClick} className={`p-2.5 sm:p-3 rounded-full text-white transition-colors duration-150 ease-in-out 
+        ${active ? activeColor : 'bg-gray-600 hover:bg-gray-500'} focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50`}>
+        {children}
+      </button>
+    );
+
+    // SVG Icons (simplified for brevity)
+    const MicOnIcon = <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>;
+    const MicOffIcon = <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3zM12 18.5A4.5 4.5 0 0016.5 14H8a4.5 4.5 0 004 4.5zM6 18L18 6M6 6l12 12" /></svg>; // Added slash for MicOff
+    const VideoOnIcon = <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z" /></svg>;
+    const VideoOffIcon = <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1zm0 0l6.364-3.182M10.364 4.818L4 8m6.364-3.182l-1.455-2.723M6 18L18 6M6 6l12 12" /></svg>; // Added slash for VideoOff
+    const GalleryLayoutIcon = <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>;
+    const SpeakerLayoutIcon = <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" /></svg>;
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
