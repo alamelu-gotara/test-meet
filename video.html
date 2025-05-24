@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-  <title>SyncLite Pro Video Chat - V3.6</title>
+  <title>SyncLite Pro Video Chat - V3.7</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -14,40 +14,19 @@
     body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-    .video-container { position: relative; background-color: #1a202c; /* bg-gray-800 */ overflow: hidden; border-radius: 0.375rem; /* rounded-md */ }
+    .video-container { position: relative; background-color: #1a202c; overflow: hidden; border-radius: 0.375rem; width: 100%; height: 100%; }
     .participant-name {
-      position: absolute;
-      bottom: 6px;
-      left: 6px;
-      background-color: rgba(0, 0, 0, 0.65);
-      color: white;
-      font-size: 0.7rem; /* text-xs */
-      padding: 3px 8px;
-      border-radius: 0.25rem; /* rounded-sm */
-      max-width: calc(100% - 12px);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      z-index: 10;
+      position: absolute; bottom: 6px; left: 6px; background-color: rgba(0, 0, 0, 0.75);
+      color: white; font-size: 0.7rem; padding: 3px 8px; border-radius: 0.25rem;
+      max-width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; z-index: 10;
     }
     .video-element { width: 100%; height: 100%; display: block; }
     .disabled-video-placeholder {
       width: 100%; height: 100%; display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      background-color: #2d3748; /* bg-gray-700 */ color: #a0aec0; /* text-gray-400 */
-      font-size: 0.875rem; /* text-sm */
+      align-items: center; justify-content: center; background-color: #2d3748;
+      color: #a0aec0; font-size: 0.875rem;
     }
     .shadow-up { box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1), 0 -2px 4px -1px rgba(0, 0, 0, 0.06); }
-    .control-bar-overlay {
-        position: absolute;
-        bottom: 1rem; /* p-4 */
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 20;
-        background-color: rgba(26, 32, 44, 0.75); /* bg-gray-800 with opacity */
-        border-radius: 9999px; /* rounded-full */
-        padding: 0.5rem 1rem; /* py-2 px-4 */
-    }
   </style>
 </head>
 <body>
@@ -59,7 +38,7 @@
     function App() {
       const [peerId, setPeerId] = useState('');
       const [roomId, setRoomId] = useState('');
-      const [displayName, setDisplayName] = useState(''); // For user's name
+      const [displayName, setDisplayName] = useState('');
       const [status, setStatus] = useState('Initializing Peer Connection...');
       const [videos, setVideos] = useState([]); 
       const [joined, setJoined] = useState(false);
@@ -67,21 +46,28 @@
       const [isVideoEnabled, setIsVideoEnabled] = useState(true);
       const [viewMode, setViewMode] = useState('speaker'); 
       const [activeSpeakerId, setActiveSpeakerId] = useState(null); 
-      const [useOverlayControls, setUseOverlayControls] = useState(false); // New state for control style
 
       const peerRef = useRef(null);
       const connectionsRef = useRef({});
       const callsRef = useRef({});
       const localStreamRef = useRef(null);
 
+      // Log videos state whenever it changes for debugging
+      useEffect(() => {
+        console.log("Videos state updated:", videos);
+        if (joined && videos.length > 0 && !activeSpeakerId) {
+            const localVideo = videos.find(v => v.isLocal);
+            setActiveSpeakerId(localVideo?.peerId || videos[0]?.peerId);
+        }
+      }, [videos, joined, activeSpeakerId]);
+
+
       useEffect(() => {
         console.log("Attempting to initialize PeerJS...");
-        if (peerRef.current) {
-            peerRef.current.destroy();
-        }
+        if (peerRef.current) peerRef.current.destroy();
+        
         const newPeerInstance = new Peer(undefined, { debug: 3 });
         peerRef.current = newPeerInstance;
-        console.log("PeerJS: New peer instance created with temporary ID:", newPeerInstance.id);
 
         newPeerInstance.on('open', (id) => {
           console.log('PeerJS: "open" event. Connected with ID:', id);
@@ -93,147 +79,160 @@
 
         newPeerInstance.on('connection', (conn) => {
           if (!peerRef.current || peerRef.current.disconnected || peerRef.current !== newPeerInstance) return;
-          console.log('PeerJS: "connection" event from', conn.peer, 'Metadata:', conn.metadata);
-          connectionsRef.current[conn.peer] = conn;
+          const remotePeerId = conn.peer;
+          const remoteMetaName = conn.metadata?.displayName;
+          console.log(`PeerJS: Data connection opened with ${remotePeerId} (Name: ${remoteMetaName})`);
+          connectionsRef.current[remotePeerId] = conn;
           
-          conn.on('open', () => { // Handle metadata on open
-            if (conn.metadata && conn.metadata.displayName) {
-              setVideos(prev => prev.map(v => v.peerId === conn.peer ? { ...v, name: conn.metadata.displayName } : v));
-            }
-          });
+          if (remoteMetaName) { // Update name if we get it from metadata here
+              updateOrAddParticipantName(remotePeerId, remoteMetaName);
+          }
 
-          conn.on('data', data => handleSignalingData(data, conn, conn.metadata?.displayName));
-          conn.on('close', () => handleDisconnect(conn.peer, 'Data connection closed'));
-          conn.on('error', err => handleDisconnect(conn.peer, `Data connection error: ${err.type || err.message}`));
+          conn.on('data', data => handleSignalingData(data, conn));
+          conn.on('close', () => handleDisconnect(remotePeerId, 'Data connection closed'));
+          conn.on('error', err => handleDisconnect(remotePeerId, `Data connection error: ${err.type || err.message}`));
         });
         
         newPeerInstance.on('call', (call) => {
           if (!peerRef.current || peerRef.current.disconnected || peerRef.current !== newPeerInstance) return;
-          console.log('PeerJS: "call" event from', call.peer, 'Metadata:', call.metadata);
+          const remotePeerId = call.peer;
+          const remoteMetaName = call.metadata?.displayName;
+          console.log(`PeerJS: Incoming call from ${remotePeerId} (Name: ${remoteMetaName})`);
+
           if (localStreamRef.current) {
-            call.answer(localStreamRef.current, { metadata: { displayName: displayName || `Peer ${peerId.substring(0,4)}` } });
+            call.answer(localStreamRef.current, { metadata: { displayName: displayName || `User-${peerId.substring(0,4)}` } });
           } else { 
-            console.warn('Call received from', call.peer, 'but local stream is not ready. Call not answered.');
+            console.warn('Call received but local stream not ready. Not answered.');
             return; 
           }
           
-          const remoteName = call.metadata?.displayName || `Peer ${call.peer.substring(0,4)}`;
-          call.on('stream', remoteStream => addVideo(call.peer, remoteStream, false, remoteName));
-          callsRef.current[call.peer] = call;
-          call.on('close', () => handleDisconnect(call.peer, 'Call closed'));
-          call.on('error', (err) => handleDisconnect(call.peer, `Call error: ${err.type || err.message}`));
-          // If video already exists for this peer (e.g., from data connection), update name
-          setVideos(prev => prev.map(v => v.peerId === call.peer ? { ...v, name: remoteName } : v));
-          if (!videos.some(v => v.peerId === call.peer)) { // If no video placeholder yet
-             addVideo(call.peer, null, false, remoteName); // Add with name, stream will follow
-          }
+          callsRef.current[remotePeerId] = call;
+          const nameForVideo = remoteMetaName || `Peer-${remotePeerId.substring(0,4)}`;
+          updateOrAddParticipantName(remotePeerId, nameForVideo); // Ensure name is set/updated
 
+          call.on('stream', remoteStream => {
+            console.log(`Received remote stream from ${remotePeerId} (Name: ${nameForVideo})`);
+            addOrUpdateVideo(remotePeerId, remoteStream, false, nameForVideo);
+          });
+          call.on('close', () => handleDisconnect(remotePeerId, 'Call closed'));
+          call.on('error', (err) => handleDisconnect(remotePeerId, `Call error: ${err.type || err.message}`));
         });
 
-        newPeerInstance.on('disconnected', () => {
-          console.warn('PeerJS: "disconnected" event.');
-          if (peerRef.current === newPeerInstance && !peerRef.current.destroyed) {
-             setStatus('Connection to signaling server lost. Reconnecting...');
-          }
-        });
+        // ... (other PeerJS event handlers: disconnected, close, error - kept concise for brevity)
+        newPeerInstance.on('disconnected', () => { if (peerRef.current === newPeerInstance && !peerRef.current.destroyed) setStatus('Connection to signaling server lost. Reconnecting...'); });
         newPeerInstance.on('close', () => console.log('PeerJS: "close" event (peer destroyed).'));
-        newPeerInstance.on('error', (err) => {
-          console.error('PeerJS: "error" event:', err);
-          let message = `PeerJS Error: ${err.type || 'Unknown'}`;
-          if (err.message) message += ` - ${err.message}`;
-          if (peerRef.current === newPeerInstance && !peerRef.current.destroyed) setStatus(message);
-          if (err.type === 'browser-incompatible' || (err.type === 'socket-error' && !newPeerInstance.disconnected)) {
-            if (peerRef.current === newPeerInstance) peerRef.current.destroy();
-          }
-        });
+        newPeerInstance.on('error', (err) => { console.error('PeerJS Error:', err); if (peerRef.current === newPeerInstance && !peerRef.current.destroyed) setStatus(`PeerJS Error: ${err.type}`);});
+
+
         return () => {
-          console.log('useEffect cleanup: Destroying PeerJS instance.');
+          console.log('Cleanup: Destroying PeerJS instance.');
           newPeerInstance.destroy(); 
           if (peerRef.current === newPeerInstance) peerRef.current = null; 
+          Object.values(callsRef.current).forEach(c => c.close());
+          Object.values(connectionsRef.current).forEach(c => c.close());
           callsRef.current = {}; connectionsRef.current = {};
           localStreamRef.current?.getTracks().forEach(track => track.stop());
           localStreamRef.current = null;
         };
       }, []); 
 
-      useEffect(() => { // Manage active speaker and view mode based on videos
-        if (!joined) return;
-        const localVideo = videos.find(v => v.isLocal);
-        const currentActiveSpeaker = videos.find(v => v.peerId === activeSpeakerId);
+      // Helper to update name in videos array, or add a placeholder if peer not yet in videos
+      const updateOrAddParticipantName = (pId, name) => {
+        setVideos(prevVideos => {
+            const existingVid = prevVideos.find(v => v.peerId === pId);
+            if (existingVid) {
+                if (existingVid.name !== name) {
+                    console.log(`Updating name for ${pId} from "${existingVid.name}" to "${name}"`);
+                    return prevVideos.map(v => v.peerId === pId ? { ...v, name } : v);
+                }
+                return prevVideos; // No change needed
+            } else {
+                // Add a placeholder if the peer is new and we only have a name so far
+                console.log(`Adding placeholder for ${pId} with name "${name}"`);
+                return [...prevVideos, { peerId: pId, stream: null, isLocal: false, name }];
+            }
+        });
+      };
+      
+      const addOrUpdateVideo = (pId, stream, isLocal = false, name = '') => {
+        const participantName = name || (isLocal ? (displayName || `You-${pId.substring(0,6)}`) : `Peer-${pId.substring(0,6)}`);
+        console.log(`Adding/Updating ${isLocal ? 'local' : 'remote'} video for ${participantName} (${pId})`);
+        setVideos(prev => {
+          const existingVideo = prev.find(v => v.peerId === pId);
+          if (existingVideo) {
+            return prev.map(v => v.peerId === pId ? { ...v, stream, name: participantName, isLocal } : v);
+          }
+          return [...prev, { peerId: pId, stream, isLocal, name: participantName }];
+        });
+        if (isLocal && !activeSpeakerId) setActiveSpeakerId(pId);
+      };
 
-        if (!activeSpeakerId || !currentActiveSpeaker) { // If no active speaker or current one left
-            setActiveSpeakerId(localVideo?.peerId || videos[0]?.peerId || null);
-        }
-        if (videos.length <= 1 && viewMode === 'gallery') setViewMode('speaker');
-      }, [videos, activeSpeakerId, joined, peerId, viewMode]);
+      const handleSignalingData = (data, conn) => {
+        const senderPeerId = conn.peer;
+        const senderMetaName = conn.metadata?.displayName; // Name from connection metadata
+        const senderDisplayName = data.name || senderMetaName || `Peer-${senderPeerId.substring(0,4)}`; // Prioritize name from data packet
+        
+        console.log(`Signaling data: ${data.type} from ${senderDisplayName} (${senderPeerId})`, data);
+        updateOrAddParticipantName(senderPeerId, senderDisplayName); // Ensure sender's name is known
 
-      const handleSignalingData = (data, conn, senderName) => {
-        console.log("Signaling data:", data, "from", conn.peer, "name:", senderName);
-        const remoteName = senderName || conn.metadata?.displayName || `Peer ${conn.peer.substring(0,4)}`;
         switch (data.type) {
-          case 'join-request': // Changed from 'join-room' to be more explicit
-            console.log(`${remoteName} (${conn.peer}) requests to join. Sending peer list.`);
-            const currentPeersWithNames = Object.entries(callsRef.current).map(([pid, call]) => ({
-                peerId: pid,
-                name: videos.find(v => v.peerId === pid)?.name || call.metadata?.displayName || `Peer ${pid.substring(0,4)}`
-            }));
-            conn.send({ type: 'room-info', peers: currentPeersWithNames, hostName: displayName || `Host (${peerId.substring(0,4)})` });
-            
-            // Notify existing peers about the new joiner
+          case 'join-request':
+            console.log(`${senderDisplayName} requests to join. Sending room info.`);
+            const currentPeersWithNames = videos
+                .filter(v => !v.isLocal && callsRef.current[v.peerId]) // Only send info about connected peers
+                .map(v => ({ peerId: v.peerId, name: v.name }));
+
+            conn.send({ 
+                type: 'room-info', 
+                peers: currentPeersWithNames, 
+                hostName: displayName || `Host-${peerId.substring(0,4)}` 
+            });
+            // Notify existing peers
             Object.values(connectionsRef.current).forEach(existingConn => {
-              if (existingConn.peer !== conn.peer && existingConn.open) {
-                existingConn.send({ type: 'new-peer', peerId: conn.peer, name: remoteName });
+              if (existingConn.peer !== senderPeerId && existingConn.open) {
+                existingConn.send({ type: 'new-peer', peerId: senderPeerId, name: senderDisplayName });
               }
             });
-            // If not already calling, initiate call
-            if (localStreamRef.current && !callsRef.current[conn.peer]) callPeer(conn.peer, remoteName);
+            if (localStreamRef.current && !callsRef.current[senderPeerId]) callPeer(senderPeerId, senderDisplayName);
             break;
           case 'room-info': 
             console.log(`Received room info from host ${data.hostName}:`, data.peers);
             data.peers.forEach(pInfo => {
               if (pInfo.peerId !== peerId && !callsRef.current[pInfo.peerId] && !connectionsRef.current[pInfo.peerId]) {
                 connectAndCallPeer(pInfo.peerId, pInfo.name);
+              } else {
+                updateOrAddParticipantName(pInfo.peerId, pInfo.name); // Update name if already connecting/connected
               }
             });
             break;
           case 'new-peer': 
-            console.log(`New peer ${data.name} (${data.peerId}) joined.`);
+            console.log(`New peer notification: ${data.name} (${data.peerId}) joined.`);
             if (data.peerId !== peerId && !callsRef.current[data.peerId] && !connectionsRef.current[data.peerId]) {
               connectAndCallPeer(data.peerId, data.name);
+            } else {
+                updateOrAddParticipantName(data.peerId, data.name);
             }
-            break;
-          case 'name-update':
-            console.log(`Name update from ${conn.peer}: ${data.name}`);
-            setVideos(prev => prev.map(v => v.peerId === conn.peer ? { ...v, name: data.name } : v));
             break;
           default: console.warn("Unknown signaling data type:", data.type);
         }
       };
 
-      const addVideo = (pId, stream, isLocal = false, name = '') => {
-        const participantName = name || (isLocal ? (displayName || `You (${pId.substring(0,6)})`) : `Peer (${pId.substring(0,6)})`);
-        console.log(`${isLocal ? 'Adding local' : 'Adding remote'} video for ${participantName} (${pId})`);
-        setVideos(prev => {
-          const existingVideo = prev.find(v => v.peerId === pId);
-          if (existingVideo) {
-            return prev.map(v => v.peerId === pId ? { ...v, stream, name: participantName } : v);
-          }
-          return [...prev, { peerId: pId, stream, isLocal, name: participantName }];
-        });
-        if(isLocal && !activeSpeakerId) setActiveSpeakerId(pId);
-      };
-
       const handleDisconnect = (pId, reason = "Unknown") => {
-        const disconnectedPeerName = videos.find(v => v.peerId === pId)?.name || pId;
-        console.log(`Disconnecting ${disconnectedPeerName}. Reason: ${reason}`);
+        const disconnectedPeer = videos.find(v => v.peerId === pId);
+        const disconnectedPeerName = disconnectedPeer?.name || `Peer-${pId.substring(0,4)}`;
+        console.log(`Handling disconnect for ${disconnectedPeerName}. Reason: ${reason}`);
         setVideos(prev => prev.filter(v => v.peerId !== pId));
-        callsRef.current[pId]?.close(); delete callsRef.current[pId];
-        connectionsRef.current[pId]?.close(); delete connectionsRef.current[pId];
-        console.log(`Peer ${disconnectedPeerName} removed.`);
+        if (callsRef.current[pId]) { callsRef.current[pId].close(); delete callsRef.current[pId]; }
+        if (connectionsRef.current[pId]) { connectionsRef.current[pId].close(); delete connectionsRef.current[pId]; }
+        console.log(`${disconnectedPeerName} removed.`);
+        if (activeSpeakerId === pId) { // If the disconnected peer was the active speaker
+            const newActive = videos.find(v => v.isLocal)?.peerId || (videos.length > 0 ? videos.filter(v => v.peerId !== pId)[0]?.peerId : null);
+            setActiveSpeakerId(newActive);
+        }
       };
       
       const joinRoom = async () => {
-        if (!peerRef.current || peerRef.current.disconnected) { setStatus("PeerJS not connected."); return; }
+        if (!peerRef.current || !peerId) { setStatus("PeerID not ready."); return; }
         if (!roomId.trim()) { setStatus("Room ID required."); return; }
         if (!displayName.trim()) { setStatus("Display Name required."); return; }
 
@@ -245,26 +244,25 @@
           localStreamRef.current = stream;
           stream.getVideoTracks().forEach(t => t.enabled = isVideoEnabled);
           stream.getAudioTracks().forEach(t => t.enabled = !isMuted);
-          addVideo(peerId, stream, true, displayName); // Use displayName for local video
+          
+          addOrUpdateVideo(peerId, stream, true, displayName); // Add local video
           setJoined(true);
-          setActiveSpeakerId(peerId); // Set self as active speaker initially
+          setActiveSpeakerId(peerId);
           setStatus('Joining room...');
 
           if (roomId !== peerId) { // Joining an existing room
-            console.log(`Joining room ${roomId}, hosted by another peer.`);
             const conn = peerRef.current.connect(roomId, { metadata: { displayName: displayName } });
-            if (!conn) { /* ... error handling ... */ setStatus('Failed to initiate connection.'); setJoined(false); return; }
+            if (!conn) { setStatus('Failed to initiate connection.'); setJoined(false); return; }
             connectionsRef.current[roomId] = conn;
             conn.on('open', () => {
-              setStatus(`Connected. Requesting to join room...`);
-              conn.send({ type: 'join-request', peerId, name: displayName }); // Send name with join request
+              setStatus(`Connected to host. Requesting room entry...`);
+              conn.send({ type: 'join-request', name: displayName }); // Send name with join request
             });
             conn.on('data', data => handleSignalingData(data, conn));
-            conn.on('close', () => { setStatus(`Disconnected from host.`); handleDisconnect(roomId, 'Host connection closed'); endCall(); });
-            conn.on('error', err => { setStatus(`Host conn error: ${err.type}`); handleDisconnect(roomId, `Host conn error: ${err.type}`); endCall(); });
+            conn.on('close', () => { handleDisconnect(roomId, 'Host connection closed'); endCall(); });
+            conn.on('error', err => { handleDisconnect(roomId, `Host conn error: ${err.type}`); endCall(); });
           } else { // Hosting the room
             setStatus(`Hosting room. Share Room ID: ${peerId}`);
-            console.log(`Hosting room with ID: ${peerId}, Name: ${displayName}`);
           }
         } catch (err) {
           setStatus(`Media Error: ${err.name}. Check permissions.`);
@@ -274,53 +272,59 @@
       };
 
       const callPeer = (targetPeerId, targetName = '') => {
-        if (!localStreamRef.current || callsRef.current[targetPeerId]) return;
+        if (!localStreamRef.current) { console.warn("Local stream not ready for call."); return; }
+        if (callsRef.current[targetPeerId]) { console.warn(`Call to ${targetPeerId} already exists.`); return; }
         if (!peerRef.current || peerRef.current.disconnected) { console.error("Cannot call: PeerJS not connected."); return; }
         
-        const remoteDisplayName = targetName || `Peer ${targetPeerId.substring(0,4)}`;
+        const remoteDisplayName = targetName || `Peer-${targetPeerId.substring(0,4)}`;
+        updateOrAddParticipantName(targetPeerId, remoteDisplayName); // Ensure name is in videos array
         console.log(`Calling ${remoteDisplayName} (${targetPeerId})`);
         const call = peerRef.current.call(targetPeerId, localStreamRef.current, { 
-            metadata: { displayName: displayName || `Peer ${peerId.substring(0,4)}` } 
+            metadata: { displayName: displayName || `User-${peerId.substring(0,4)}` } 
         });
-        if (!call) { console.error("Failed to call", targetPeerId); return; }
+        if (!call) { console.error("Failed to initiate call to", targetPeerId); return; }
         callsRef.current[targetPeerId] = call;
-        call.on('stream', remoteStream => addVideo(targetPeerId, remoteStream, false, remoteDisplayName));
+        call.on('stream', remoteStream => addOrUpdateVideo(targetPeerId, remoteStream, false, remoteDisplayName));
         call.on('close', () => handleDisconnect(targetPeerId, `Call to ${remoteDisplayName} closed`));
-        call.on('error', (err) => handleDisconnect(targetPeerId, `Call error ${remoteDisplayName}: ${err.type}`));
+        call.on('error', (err) => handleDisconnect(targetPeerId, `Call error with ${remoteDisplayName}: ${err.type}`));
       };
 
       const connectAndCallPeer = (targetPeerId, targetName = '') => {
-        if (targetPeerId === peerId || connectionsRef.current[targetPeerId] || callsRef.current[targetPeerId]) return;
+        if (targetPeerId === peerId) return;
+        if (connectionsRef.current[targetPeerId] && callsRef.current[targetPeerId]) { console.warn(`Already connected and calling ${targetPeerId}`); return;}
         if (!peerRef.current || peerRef.current.disconnected) { console.error("Cannot connect/call: PeerJS not connected."); return; }
 
-        const remoteDisplayName = targetName || `Peer ${targetPeerId.substring(0,4)}`;
+        const remoteDisplayName = targetName || `Peer-${targetPeerId.substring(0,4)}`;
+        updateOrAddParticipantName(targetPeerId, remoteDisplayName); // Ensure name is in videos array
         console.log(`Connecting to ${remoteDisplayName} (${targetPeerId}) for call.`);
+        
+        if (connectionsRef.current[targetPeerId]) { // If data connection exists, just call
+            if (!callsRef.current[targetPeerId]) callPeer(targetPeerId, remoteDisplayName);
+            return;
+        }
+
         const conn = peerRef.current.connect(targetPeerId, { 
-            metadata: { displayName: displayName || `Peer ${peerId.substring(0,4)}` } 
+            metadata: { displayName: displayName || `User-${peerId.substring(0,4)}` } 
         });
         if (!conn) { console.error("Failed to connect to", remoteDisplayName); return; }
         connectionsRef.current[targetPeerId] = conn;
         conn.on('open', () => {
             console.log(`Data connection to ${remoteDisplayName} open. Initiating call.`);
-            callPeer(targetPeerId, remoteDisplayName);
+            if (!callsRef.current[targetPeerId]) callPeer(targetPeerId, remoteDisplayName);
         });
-        conn.on('data', data => handleSignalingData(data, conn, remoteDisplayName));
+        conn.on('data', data => handleSignalingData(data, conn));
         conn.on('close', () => handleDisconnect(targetPeerId, `Data conn with ${remoteDisplayName} closed`));
-        conn.on('error', err => handleDisconnect(targetPeerId, `Data conn error ${remoteDisplayName}: ${err.type}`));
+        conn.on('error', err => handleDisconnect(targetPeerId, `Data conn error with ${remoteDisplayName}: ${err.type}`));
       };
       
-      const endCall = () => {
-        console.log("Ending call for all connections.");
+      const endCall = () => { /* ... same as before ... */ 
+        console.log("Ending call.");
         Object.values(callsRef.current).forEach(call => call.close());
         Object.values(connectionsRef.current).forEach(conn => conn.close());
-        callsRef.current = {};
-        connectionsRef.current = {};
+        callsRef.current = {}; connectionsRef.current = {};
         localStreamRef.current?.getTracks().forEach(track => track.stop());
         localStreamRef.current = null;
-        setVideos([]);
-        setJoined(false);
-        setActiveSpeakerId(null);
-        // Keep peerId for rejoining/hosting. RoomId could be cleared or kept.
+        setVideos([]); setJoined(false); setActiveSpeakerId(null);
         setStatus('Call ended. Ready to start/join another.');
       };
 
@@ -331,20 +335,28 @@
       const VideoPlayer = ({ stream, isLocal, isVideoActuallyEnabled, name, objectFitClass = "object-cover" }) => { 
         const videoRef = useRef(null); 
         useEffect(() => { if (videoRef.current && stream) videoRef.current.srcObject = stream; }, [stream]); 
+        // Added a key to the outer div to help React differentiate when name changes on existing video
         return (
-          <div className="w-full h-full relative">
+          <div className="w-full h-full relative" key={name}> {/* Key might help if name updates on existing stream */}
             {(isLocal && !isVideoActuallyEnabled) ? 
               <VideoPlaceholder text="Your video is off" /> : 
-              <video ref={videoRef} autoPlay playsInline muted={isLocal} className={`video-element ${objectFitClass}`} />
+              (stream ? 
+                <video ref={videoRef} autoPlay playsInline muted={isLocal} className={`video-element ${objectFitClass}`} /> :
+                <VideoPlaceholder text={name ? `${name} (Connecting...)` : "Connecting..."} />
+              )
             }
             {name && <div className="participant-name">{name}</div>}
           </div>
         );
       };
       
-      const activeSpeakerVideo = videos.find(v => v.peerId === activeSpeakerId);
-      const filmstripVideos = videos.filter(v => v.peerId !== activeSpeakerId);
-      const galleryCols = videos.length <= 1 ? 1 : (videos.length <= 4 ? 2 : (videos.length <= 9 ? 3 : 4));
+      const activeSpeakerVideo = videos.find(v => v.peerId === activeSpeakerId && v.stream); // Ensure stream exists
+      const filmstripVideos = videos.filter(v => v.peerId !== activeSpeakerId && v.stream); // Ensure stream exists
+      const galleryGridVideos = videos.filter(v => v.stream); // Only show videos with streams in gallery
+
+      const galleryCols = galleryGridVideos.length <= 1 ? 1 : (galleryGridVideos.length <= 4 ? 2 : (galleryGridVideos.length <= 9 ? 3 : 4));
+      const galleryRows = galleryGridVideos.length > 0 ? Math.ceil(galleryGridVideos.length / galleryCols) : 1;
+
       const MicOnIcon = <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>;
       const MicOffIcon = <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3zM12 18.5A4.5 4.5 0 0016.5 14H8a4.5 4.5 0 004 4.5zM6 18L18 6M6 6l12 12" /></svg>; 
       const VideoOnIcon = <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 8h11a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z" /></svg>;
@@ -362,7 +374,7 @@
             <ControlButton title={isVideoEnabled ? "Cam Off" : "Cam On"} onClick={toggleVideo} active={!isVideoEnabled} activeColor="bg-red-600">
               {isVideoEnabled ? VideoOnIcon : VideoOffIcon}
             </ControlButton>
-            {videos.length > 1 && (
+            {galleryGridVideos.length > 1 && ( // Use galleryGridVideos here
               <ControlButton title={viewMode === 'gallery' ? "Speaker View" : "Gallery View"} 
                              onClick={() => setViewMode(prev => prev === 'gallery' ? 'speaker' : 'gallery')}>
                 {viewMode === 'gallery' ? SpeakerLayoutIcon : GalleryLayoutIcon}
@@ -374,13 +386,12 @@
         </div>
       );
 
-
       return (
         <div className="w-full h-screen flex flex-col bg-gray-900">
           {!joined ? (
             <div className="flex-grow flex flex-col items-center justify-center p-4">
-              <h1 className="text-4xl font-bold text-purple-400 mb-2">SyncLite Pro</h1>
-              <p className="text-xs text-gray-400 mb-6">Peer-to-Peer Video Chat - V3.6</p>
+              <h1 className="text-4xl font-bold text-purple-400 mb-2">SyncLite Pro - V3.7</h1>
+              <p className="text-xs text-gray-400 mb-6">Peer-to-Peer Video Chat</p>
               <div className="bg-gray-800 p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-md space-y-5">
                 <p className="text-center text-sm"><strong>Your Peer ID:</strong> <span className="text-green-400 break-all block mt-1">{peerId || 'Connecting...'}</span></p>
                 <div>
@@ -393,23 +404,21 @@
                   <input id="roomIdInput" className="border-transparent p-3 w-full rounded-md bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:outline-none"
                     placeholder="Enter Room ID or your ID to host" value={roomId} onChange={e => setRoomId(e.target.value)} disabled={!peerId} />
                 </div>
-                <p className="text-center text-xs text-red-400 h-4">{status.startsWith("Ready") ? "" : status}</p>
+                <p className="text-center text-xs text-red-400 h-4">{status.startsWith("Ready") ? "" : (status.startsWith("PeerJS Error:") ? status : "")}</p>
                 <button onClick={joinRoom} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-4 rounded-md w-full font-semibold disabled:opacity-50 transition-all duration-150 ease-in-out"
                   disabled={!peerId || !roomId.trim() || !displayName.trim()}>
                   {(roomId === peerId && peerId) ? 'Start & Host Chat' : 'Join Chat Room'}
                 </button>
-                {/*<div className="mt-4 text-center">
-                    <label htmlFor="overlayToggle" className="text-xs text-gray-400 mr-2">Overlay Controls:</label>
-                    <input type="checkbox" id="overlayToggle" checked={useOverlayControls} onChange={(e) => setUseOverlayControls(e.target.checked)} className="align-middle"/>
-                </div>*/}
               </div>
             </div>
           ) : (
-            <div className="flex-grow flex flex-col overflow-hidden relative"> {/* Added relative for overlay */}
-              <div className="flex-grow flex flex-col bg-black p-1 sm:p-2"> {/* Video Area */}
+            // Main chat UI: Ensure this container takes full height and width available after header/footer if any
+            <div className="flex-grow flex flex-col overflow-hidden w-full"> {/* Occupy full width and grow height */}
+              {/* Video Area: This should also grow and allow scrolling if content overflows */}
+              <div className="flex-grow flex flex-col bg-black p-1 sm:p-2 min-h-0"> {/* min-h-0 is important for flex children with overflow */}
                 {viewMode === 'speaker' ? (
-                  <div className="flex flex-col flex-grow h-full space-y-1 sm:space-y-2">
-                    <div className="flex-grow video-container">
+                  <div className="flex flex-col flex-grow h-full space-y-1 sm:space-y-2 min-h-0">
+                    <div className="flex-grow video-container min-h-0"> {/* Main speaker video */}
                       {activeSpeakerVideo ? (
                         <VideoPlayer 
                             stream={activeSpeakerVideo.stream} 
@@ -417,9 +426,9 @@
                             isVideoActuallyEnabled={activeSpeakerVideo.isLocal ? isVideoEnabled : true} 
                             name={activeSpeakerVideo.name}
                             objectFitClass="object-contain"/>
-                      ) : <VideoPlaceholder text={videos.length > 0 ? "Select a participant" : "Waiting for others..."} />}
+                      ) : <VideoPlaceholder text={galleryGridVideos.length > 0 ? "Select a participant" : "Waiting for others..."} />}
                     </div>
-                    {videos.length > 1 && filmstripVideos.length > 0 && (
+                    {filmstripVideos.length > 0 && ( /* Filmstrip */
                        <div className="flex-shrink-0 h-24 sm:h-32 bg-gray-800 p-1 sm:p-2 flex space-x-1 sm:space-x-2 overflow-x-auto no-scrollbar items-center rounded-md">
                         {filmstripVideos.map(video => (
                           <div key={video.peerId} className="video-container w-28 sm:w-40 h-full cursor-pointer border-2 border-transparent hover:border-purple-500 focus:border-purple-600"
@@ -434,10 +443,10 @@
                       </div>
                     )}
                   </div>
-                ) : ( 
-                  <div className={`flex-grow p-1 sm:p-2 grid gap-1 sm:gap-2 overflow-y-auto grid-cols-${galleryCols} grid-rows-${Math.ceil(videos.length / galleryCols)}`}>
-                    {videos.map(video => (
-                      <div key={video.peerId} className="video-container cursor-pointer border-2 border-transparent hover:border-purple-500 focus:border-purple-600 aspect-video"
+                ) : ( /* Gallery View */
+                  <div className={`flex-grow p-1 sm:p-2 grid gap-1 sm:gap-2 overflow-y-auto grid-cols-${galleryCols} grid-rows-${galleryRows} min-h-0`}>
+                    {galleryGridVideos.map(video => (
+                      <div key={video.peerId} className="video-container aspect-video" /* Each gallery item */
                         onClick={() => { setActiveSpeakerId(video.peerId); setViewMode('speaker');}} tabIndex="0">
                         <VideoPlayer 
                             stream={video.stream} 
@@ -446,13 +455,13 @@
                             name={video.name}/>
                       </div>
                     ))}
-                     {videos.length === 0 && <div className="disabled-video-placeholder col-span-full row-span-full"><VideoPlaceholder text="No one is here" /></div>}
+                     {galleryGridVideos.length === 0 && <div className="disabled-video-placeholder col-span-full row-span-full"><VideoPlaceholder text="No one is here" /></div>}
                   </div>
                 )}
               </div>
 
               {/* Control Bar */}
-              <div className={`flex-shrink-0 p-3 sm:p-4 shadow-up ${useOverlayControls ? 'control-bar-overlay' : 'bg-gray-800'}`}>
+              <div className="flex-shrink-0 bg-gray-800 p-3 sm:p-4 shadow-up w-full"> {/* Ensure control bar takes full width */}
                 <Controls />
               </div>
             </div>
