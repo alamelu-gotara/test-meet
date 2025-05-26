@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-  <title>SyncLite Pro Video Chat - V4.6</title>
+  <title>SyncLite Pro Video Chat - V4.7</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -60,21 +60,24 @@
     .pinned-video { border: 2px solid #8B5CF6; /* Purple-500 */ }
   </style>
 </head>
-<body class="overflow-hidden">
+<body class="overflow-hidden"> {/* Prevent body scroll */}
   <div id="root" class="h-screen bg-gray-900 flex flex-col items-center text-white"></div>
 
   <script type="text/babel">
     const { useState, useRef, useEffect, useCallback, memo } = React;
 
-    // --- Updated Icon Components (Heroicons v2 Solid) ---
-    const MicOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6"><path d="M12 18.75a.75.75 0 00.75-.75V7.57l4.968-1.656a.75.75 0 00.532-1.028A7.449 7.449 0 0012.19.75a2.25 2.25 0 00-2.38 0A7.448 7.448 0 003.75 4.886a.75.75 0 00.532 1.028L9.25 7.57v10.43a.75.75 0 00.75.75h2zM12 6.162L5.063 8.512A5.956 5.956 0 016.192 3.75h5.616c.22 0 .439.017.652.051l.001.001.001.001L12 6.162zM4.5 10.132V15a.75.75 0 00.75.75h1.5a.75.75 0 00.75-.75v-4.5a.75.75 0 00-.75-.75h-1.5a.75.75 0 00-.75.75zm15 0v4.868a.75.75 0 00.75.75h1.5a.75.75 0 00.75-.75v-4.5a.75.75 0 00-.75-.75h-1.5a.75.75 0 00-.75.75z" /></svg>);
-    const MicOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6"><path fillRule="evenodd" d="M6.055 4.5H7.5V3a.75.75 0 01.75-.75h3.5a.75.75 0 01.75.75v1.5h1.445A.75.75 0 0115 5.25v3.69l-2.22-2.22A.753.753 0 0012 6.25V4.5h-2.25v2.625c0 .414-.336.75-.75.75s-.75-.336-.75-.75V4.5zm8.53 8.945a.75.75 0 010 1.06l-2.06 2.06V18a.75.75 0 01-.75.75h-2.25a.75.75 0 01-.75-.75v-1.685l-2.06-2.06a.75.75 0 011.06-1.06l1.22 1.22V12a.75.75 0 01.75-.75h.75a.75.75 0 01.75.75v2.315l1.22-1.22a.75.75 0 011.06 0zM3.244 3.532a.75.75 0 10-1.06 1.06l18 18a.75.75 0 101.06-1.06l-18-18z" clipRule="evenodd" /></svg>); // SpeakerXMarkIcon
-    const VideoOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6"><path d="M4.5 4.5a3 3 0 00-3 3v9a3 3 0 003 3h8.25a3 3 0 003-3v-9a3 3 0 00-3-3H4.5zM19.94 18.75l-2.69-2.69V7.94l2.69-2.69c.944-.945 2.56-.276 2.56 1.06v10.12c0 1.336-1.616 2.005-2.56 1.06z" /></svg>); // VideoCameraIcon
-    const VideoOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6"><path d="M12.375 16.5V19.5H17.25V16.5H12.375Z" /><path fillRule="evenodd" d="M0 4.5C0 3.67157 0.671573 3 1.5 3H17.25C17.6642 3 18 3.33579 18 3.75V12.75C18 13.1642 17.6642 13.5 17.25 13.5H3.75L0 16.5V4.5ZM21.7502 8.25L19.5002 6V15L21.7502 12.75V8.25Z" clipRule="evenodd"/><path d="M2.022 1.978a.75.75 0 011.06 0L22.978 21.873a.75.75 0 01-1.06 1.06L1.978 2.978a.75.75 0 010-1.06z"/></svg>); // VideoCameraSlashIcon like
-    const EndCallIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6"><path fillRule="evenodd" d="M1.5 4.5a3 3 0 013-3h1.372c.86 0 1.61.586 1.819 1.42l1.105 4.423a1.875 1.875 0 01-.694 1.955l-1.293.97c-.135.101-.164.279-.088.401l2.71 4.273c.076.122.248.162.396.136l1.408-.704a1.875 1.875 0 012.164.047l4.272 3.457a3 3 0 01-4.242 4.242l-4.273-3.457a1.875 1.875 0 01-.047-2.164l.704-1.408a.25.25 0 00-.136-.396L5.337 8.551a1.875 1.875 0 01-1.955-.694L1.96 6.735A3 3 0 011.5 4.5zM14.624 19.32a1.5 1.5 0 00-2.121-2.121l2.121-2.121a1.5 1.5 0 002.121 2.121l-2.121 2.121zM18.868 15.076a1.5 1.5 0 00-2.121-2.121l2.121-2.121a1.5 1.5 0 002.121 2.121l-2.121 2.121z" clipRule="evenodd" /></svg>); // PhoneXMarkIcon
-    const LayoutGalleryIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path fillRule="evenodd" d="M4.5 3A1.5 1.5 0 003 4.5v15A1.5 1.5 0 004.5 21h15a1.5 1.5 0 001.5-1.5v-15A1.5 1.5 0 0019.5 3h-15zm6.75 2.25a.75.75 0 000 1.5h3.75a.75.75 0 000-1.5h-3.75zM4.5 7.5A.75.75 0 015.25 6.75h13.5a.75.75 0 01.75.75v10.5a.75.75 0 01-.75.75H5.25a.75.75 0 01-.75-.75V7.5zm6.75 5.25a.75.75 0 000 1.5h3.75a.75.75 0 000-1.5h-3.75z" clipRule="evenodd" /></svg>); // Squares2X2Icon
-    const LayoutSpeakerIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M3 5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25v10.5A2.25 2.25 0 0118.75 18H5.25A2.25 2.25 0 013 15.75V5.25zM5.25 4.5c-.414 0-.75.336-.75.75v10.5c0 .414.336.75.75.75H10.5V4.5H5.25zm5.25 12h8.25a.75.75 0 00.75-.75V5.25a.75.75 0 00-.75-.75H11.25V16.5z" /></svg>); // RectangleStackIcon
-    const LayoutsIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6"><path fillRule="evenodd" d="M6.75 2.25A.75.75 0 017.5 3v1.5h9V3A.75.75 0 0118 2.25c.414 0 .75.336.75.75v15a.75.75 0 01-.75.75H6a.75.75 0 01-.75-.75V3c0-.414.336-.75.75-.75zM7.5 19.5V21a.75.75 0 00.75.75h7.5a.75.75 0 00.75-.75v-1.5H7.5z" clipRule="evenodd" /><path d="M3 9.75A.75.75 0 013.75 9h16.5a.75.75 0 010 1.5H3.75A.75.75 0 013 9.75zM3 5.25A.75.75 0 013.75 4.5h16.5a.75.75 0 010 1.5H3.75A.75.75 0 013 5.25zm0 9A.75.75 0 013.75 13.5h16.5a.75.75 0 010 1.5H3.75a.75.75 0 01-.75-.75z" /></svg>); // SquaresPlusIcon for "More Layouts" type feel
+    // --- Updated Icon Components ---
+    // Material Design Style Icons for Mic/Video
+    const MicOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 24 24" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>);
+    const MicOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 24 24" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06 0-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.02 6.02V11c0 1.66 1.34 3 3 3 .22 0 .42-.03.62-.07L15.73 17l1.41-1.41L4.27 3zM12 14c.21 0 .4-.02.58-.05l-2.63-2.63V11c0 .55.45 1 1 1s1-.45 1-1v-.34l-2.95-2.95V5c0-.55.45-1 1-1s1 .45 1 1v3.18l-2.78-2.78C11.45 5.08 11.22 5 11 5c-.55 0-1 .45-1 1v.02L8.24 4.26C8.77 3.5 9.8 3 11 3c1.04 0 1.95.53 2.49 1.32L10 7.76V11c0 .4.13.76.33 1.06l-2.35 2.35C7.16 13.93 6.7 12.53 6.7 11H5c0 .97.26 1.86.71 2.64l1.79 1.79C8.99 16.48 10.43 17 12 17c.43 0 .85-.07 1.26-.2L17 20.73 18.27 19.46 9.29 10.48 4.27 5.46z"/></svg>); // More complex slash, ensures visibility
+    const VideoOnIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 24 24" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>);
+    const VideoOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 24 24" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2 2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2z"/></svg>);
+
+    // Heroicons Solid
+    const EndCallIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6"><path fillRule="evenodd" d="M1.5 4.5a3 3 0 013-3h1.372c.86 0 1.61.586 1.819 1.42l1.105 4.423a1.875 1.875 0 01-.694 1.955l-1.293.97c-.135.101-.164.279-.088.401l2.71 4.273c.076.122.248.162.396.136l1.408-.704a1.875 1.875 0 012.164.047l4.272 3.457a3 3 0 01-4.242 4.242l-4.273-3.457a1.875 1.875 0 01-.047-2.164l.704-1.408a.25.25 0 00-.136-.396L5.337 8.551a1.875 1.875 0 01-1.955-.694L1.96 6.735A3 3 0 011.5 4.5zM14.624 19.32a1.5 1.5 0 00-2.121-2.121l2.121-2.121a1.5 1.5 0 002.121 2.121l-2.121 2.121zM18.868 15.076a1.5 1.5 0 00-2.121-2.121l2.121-2.121a1.5 1.5 0 002.121 2.121l-2.121 2.121z" clipRule="evenodd" /></svg>);
+    const LayoutGalleryIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path fillRule="evenodd" d="M2.25 3.75A1.5 1.5 0 013.75 2.25h2.25a1.5 1.5 0 011.5 1.5v2.25a1.5 1.5 0 01-1.5 1.5H3.75a1.5 1.5 0 01-1.5-1.5V3.75zM2.25 9.75A1.5 1.5 0 013.75 8.25h2.25a1.5 1.5 0 011.5 1.5v2.25a1.5 1.5 0 01-1.5 1.5H3.75a1.5 1.5 0 01-1.5-1.5V9.75zM9.75 3.75A1.5 1.5 0 0111.25 2.25h2.25a1.5 1.5 0 011.5 1.5v2.25a1.5 1.5 0 01-1.5 1.5H11.25a1.5 1.5 0 01-1.5-1.5V3.75zM9.75 9.75A1.5 1.5 0 0111.25 8.25h2.25a1.5 1.5 0 011.5 1.5v2.25a1.5 1.5 0 01-1.5 1.5H11.25a1.5 1.5 0 01-1.5-1.5V9.75zM17.25 3.75A1.5 1.5 0 0118.75 2.25h2.25a1.5 1.5 0 011.5 1.5v2.25a1.5 1.5 0 01-1.5 1.5H18.75a1.5 1.5 0 01-1.5-1.5V3.75zM17.25 9.75A1.5 1.5 0 0118.75 8.25h2.25a1.5 1.5 0 011.5 1.5v2.25a1.5 1.5 0 01-1.5 1.5H18.75a1.5 1.5 0 01-1.5-1.5V9.75z" clipRule="evenodd" /></svg>); // Squares2X2Icon
+    const LayoutSpeakerIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path fillRule="evenodd" d="M2.25 5.25A3.75 3.75 0 016 1.5h12A3.75 3.75 0 0121.75 5.25v10.5A3.75 3.75 0 0118 19.5H6A3.75 3.75 0 012.25 15.75V5.25zm1.5.75V15a2.25 2.25 0 002.25 2.25h12a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6zm17.25 9.75a.75.75 0 00-.75-.75H3a.75.75 0 000 1.5h17.25a.75.75 0 00.75-.75z" clipRule="evenodd" /></svg>); // ComputerDesktopIcon
+    const LayoutsIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6"><path fillRule="evenodd" d="M3 6.75A.75.75 0 013.75 6h16.5a.75.75 0 010 1.5H3.75A.75.75 0 013 6.75zM3 12a.75.75 0 01.75-.75h16.5a.75.75 0 010 1.5H3.75A.75.75 0 013 12zm0 5.25a.75.75 0 01.75-.75h16.5a.75.75 0 010 1.5H3.75a.75.75 0 01-.75-.75z" clipRule="evenodd" /></svg>); // Bars3Icon (Hamburger for menu)
     const ParticipantsIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6"><path d="M4.5 6.375a4.125 4.125 0 118.25 0 4.125 4.125 0 01-8.25 0zM14.25 8.625a3.375 3.375 0 116.75 0 3.375 3.375 0 01-6.75 0zM1.5 19.125a7.125 7.125 0 0114.25 0v.003l-.001.119a.75.75 0 01-.363.63 13.067 13.067 0 01-6.761 1.873c-2.472 0-4.786-.684-6.76-1.873a.75.75 0 01-.364-.63l-.001-.122zM17.25 19.128l-.001.144a2.25 2.25 0 01-.233.96 10.088 10.088 0 005.06-1.104v-.003a5.625 5.625 0 00-4.826-4.498 29.994 29.994 0 00-2.779-.25A29.88 29.88 0 0012 15.75c-.665 0-1.316.042-1.957.124A5.625 5.625 0 005.12 20.75v.003a10.09 10.09 0 005.06 1.103 2.25 2.25 0 01-.232-.96l-.001-.144z" /></svg>); // UserGroupIcon
     const PinIcon = memo(({ sizeClass = "h-4 w-4"}) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={sizeClass}><path fillRule="evenodd" d="M11.54 22.351l.07.04.028.016a.76.76 0 00.723 0l.028-.015.071-.041a16.975 16.975 0 001.144-.742 19.58 19.58 0 002.683-2.282c1.944-1.99 3.963-4.98 3.963-8.827a8.25 8.25 0 00-16.5 0c0 3.846 2.02 6.837 3.963 8.827a19.58 19.58 0 002.682 2.282 16.975 16.975 0 001.145.742zM12 13.5a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" /></svg>); // MapPinIcon
     const PinnedIcon = memo(({ sizeClass = "h-4 w-4 text-purple-400" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={sizeClass}><path fillRule="evenodd" d="M11.54 22.351l.07.04.028.016a.76.76 0 00.723 0l.028-.015.071-.041a16.975 16.975 0 001.144-.742 19.58 19.58 0 002.683-2.282c1.944-1.99 3.963-4.98 3.963-8.827a8.25 8.25 0 00-16.5 0c0 3.846 2.02 6.837 3.963 8.827a19.58 19.58 0 002.682 2.282 16.975 16.975 0 001.145.742zM12 13.5a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" /></svg>);
@@ -82,7 +85,7 @@
     // --- Small Status Icons ---
     const VideoCamIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h5.5A1.75 1.75 0 0011 15.25V4.75A1.75 1.75 0 009.25 3h-5.5zM16.042 3.885L13.75 5.64v8.72l2.292 1.754a.912.912 0 001.52-.66V4.546a.912.912 0 00-1.52-.66z" /></svg>);
     const VideoCamOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M7.25 10C7.25 8.20507 8.70507 6.75 10.5 6.75C12.2949 6.75 13.75 8.20507 13.75 10C13.75 11.7949 12.2949 13.25 10.5 13.25C8.70507 13.25 7.25 11.7949 7.25 10Z" /><path fillRule="evenodd" d="M2 4.75A1.75 1.75 0 013.75 3h5.5A1.75 1.75 0 0111 4.75v1.775C10.201 6.23 9.25 6 8.188 6A4.187 4.187 0 004 10.188C4 11.25 4.23 12.201 4.525 13H2V4.75zm14.042-.865L13.75 5.64v8.72l2.292 1.754a.912.912 0 001.52-.66V4.546a.912.912 0 00-1.52-.66zM1.964 2.022a.75.75 0 00-1.06 1.06L2.021 4.2l.028.028L17.978 18.036a.75.75 0 001.06-1.06L3.022 1.964l-.028-.028L1.964 2.022z" clipRule="evenodd" /></svg>);
-    const MicStatusOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M10 1a3.5 3.5 0 00-3.5 3.5v8a3.5 3.5 0 107 0v-8A3.5 3.5 0 0010 1zm1.637 10.743a1.5 1.5 0 01-3.274 0V4.5a1.5 1.5 0 013.274 0v7.243zM2.022 10.278a.75.75 0 01.75-.75H4.5a.75.75 0 010 1.5H2.772a.75.75 0 01-.75-.75zm14 0a.75.75 0 01.75-.75h1.728a.75.75 0 010 1.5H16.75a.75.75 0 01-.75-.75zM6 14.75a.75.75 0 01.75.75v.041A4.482 4.482 0 0010 17.5a4.481 4.481 0 003.25-1.959v-.041a.75.75 0 011.5 0v.041a6 6 0 01-9.5 0v-.041a.75.75 0 01.75-.75zM2.576 1.904a.75.75 0 01.94-.227l16.5 8.25a.75.75 0 010 1.148l-16.5 8.25a.75.75 0 01-1.167-.92L5.69 12 .349 2.852a.75.75 0 01.227-.948z" clipRule="evenodd" /></svg>); // Mic slash for status
+    const MicStatusOffIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M9.474 2.168a.75.75 0 01.552-.01L19.5 6.022a.75.75 0 01.407.858l-3.5 9.5A.75.75 0 0115.5 17H4.5a.75.75 0 01-.859-1.12l3.5-9.5a.75.75 0 011.333-.212L9.474 2.168zm1.006-.962a2.25 2.25 0 00-1.658.33L.572 11.038a2.25 2.25 0 001.502 4.212H17.25a2.25 2.25 0 002.159-3.358L10.93 1.538a2.25 2.25 0 00-.45-.332zM3.929 19.512a.75.75 0 01-.139-1.49L15.732 6.27a.75.75 0 111.036 1.088L4.921 19.304a.75.75 0 01-.992.208z" clipRule="evenodd" /></svg>); // SpeakerXMarkIcon
 
     const ClockIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>);
     const WifiIcon = memo(() => <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M8.288 16.034A7.5 7.5 0 0112 15.75a7.5 7.5 0 013.712.284M11.25 18.75a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm6-8.25a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm-6 0a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm6 4.492A12.003 12.003 0 0012 10.5a12.003 12.003 0 00-7.492 2.992" /></svg>);
@@ -136,15 +139,15 @@
                pvd.isLocal === nvd.isLocal && pvd.peerId === nvd.peerId &&
                prevProps.isLocalVideoGloballyEnabled === nextProps.isLocalVideoGloballyEnabled &&
                prevProps.isLocalAudioGloballyMuted === nextProps.isLocalAudioGloballyMuted &&
-               prevProps.isPinned === nextProps.isPinned; // Added isPinned
+               prevProps.isPinned === nextProps.isPinned; 
     });
 
     const ControlButton = memo(({ title, onClick, children, active = false, activeColor = "bg-red-500", defaultColor = "bg-gray-600 hover:bg-gray-500", className = "" }) => ( <button title={title} onClick={onClick} className={`p-2.5 sm:p-3 rounded-full text-white transition-colors duration-150 ease-in-out ${active ? activeColor : defaultColor} focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50 ${className}`}>{children}</button>));
     
     const LayoutMenu = memo(({ onSetViewMode, currentViewMode, closeMenu }) => (
-        <div className="absolute bottom-full mb-2 w-36 bg-gray-700 rounded-md shadow-lg overflow-hidden z-30">
-            <button onClick={() => { onSetViewMode('speaker'); closeMenu(); }} className={`block w-full text-left px-4 py-2 text-sm ${currentViewMode === 'speaker' ? 'bg-purple-600' : 'hover:bg-gray-600'}`}> <LayoutSpeakerIcon /> Speaker</button>
-            <button onClick={() => { onSetViewMode('gallery'); closeMenu(); }} className={`block w-full text-left px-4 py-2 text-sm ${currentViewMode === 'gallery' ? 'bg-purple-600' : 'hover:bg-gray-600'}`}> <LayoutGalleryIcon /> Gallery</button>
+        <div className="absolute bottom-full mb-2 w-40 bg-gray-700 rounded-md shadow-lg overflow-hidden z-30">
+            <button onClick={() => { onSetViewMode('speaker'); closeMenu(); }} className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm ${currentViewMode === 'speaker' ? 'bg-purple-600' : 'hover:bg-gray-600'}`}> <LayoutSpeakerIcon /> Speaker</button>
+            <button onClick={() => { onSetViewMode('gallery'); closeMenu(); }} className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm ${currentViewMode === 'gallery' ? 'bg-purple-600' : 'hover:bg-gray-600'}`}> <LayoutGalleryIcon /> Gallery</button>
         </div>
     ));
 
@@ -198,6 +201,9 @@
               </div>)}</div>);
     });
 
+    // ... (Rest of the App component and its functions remain the same as V4.6)
+    // Ensure all useCallback dependencies are correct, especially for functions using refs.
+    // The core logic for WebRTC, PeerJS, state management, etc., is not changed in this specific icon update.
 
     function App() {
       const [peerId, setPeerId] = useState('');
@@ -228,7 +234,7 @@
       const localStreamRef = useRef(null);
       const timerIntervalRef = useRef(null);
       const controlsTimeoutRef = useRef(null);
-      const appContainerRef = useRef(null); // For mouse move detection on the whole app area
+      const appContainerRef = useRef(null); 
 
       const displayNameRef = useRef(displayName);
       const peerIdRef = useRef(peerId);
@@ -240,12 +246,11 @@
       useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
       useEffect(() => { isVideoEnabledRef.current = isVideoEnabled; }, [isVideoEnabled]);
 
-      // Auto-hide controls logic
       const showControlsTemporarily = useCallback(() => {
         setControlsVisible(true);
         clearTimeout(controlsTimeoutRef.current);
         controlsTimeoutRef.current = setTimeout(() => {
-            if (!showLayoutMenu) { // Don't hide if a menu is open
+            if (!showLayoutMenu) { 
                  setControlsVisible(false);
             }
         }, 3000);
@@ -255,7 +260,7 @@
         const appDiv = appContainerRef.current;
         if (joined && appDiv) {
             appDiv.addEventListener('mousemove', showControlsTemporarily);
-            showControlsTemporarily(); // Show initially
+            showControlsTemporarily(); 
         }
         return () => {
             if (appDiv) appDiv.removeEventListener('mousemove', showControlsTemporarily);
@@ -263,7 +268,6 @@
         };
       }, [joined, showControlsTemporarily]);
 
-      // Effect for PeerJS init (same as before, using refs for metadata)
       useEffect(() => { 
         if (peerRef.current) peerRef.current.destroy();
         const newPeerInstance = new Peer(undefined, { debug: 2 });
@@ -307,13 +311,13 @@
         };
       }, []); 
 
-      useEffect(() => { /* Timer effect */
+      useEffect(() => { 
         if (joined && callStartTime) { timerIntervalRef.current = setInterval(() => { setElapsedTime(prevTime => prevTime + 1); }, 1000);
         } else { clearInterval(timerIntervalRef.current); setElapsedTime(0); }
         return () => clearInterval(timerIntervalRef.current);
       }, [joined, callStartTime]);
 
-      useEffect(() => { /* Network connection listener */
+      useEffect(() => { 
         const updateNetworkInfo = () => { setNetworkType(navigator.connection ? (navigator.connection.effectiveType || navigator.connection.type || 'N/A') : 'N/A'); };
         updateNetworkInfo(); if (navigator.connection) navigator.connection.addEventListener('change', updateNetworkInfo);
         return () => { if (navigator.connection) navigator.connection.removeEventListener('change', updateNetworkInfo);};
@@ -338,24 +342,16 @@
           }
         });
          if (isLocal && !activeSpeakerId && stream !== undefined && stream !== null) setActiveSpeakerId(pId);
-      }, [activeSpeakerId]); // Removed displayName, peerId from deps, using refs. Added activeSpeakerId.
+      }, [activeSpeakerId]); 
       
-      // Centralized broadcastMediaStatus, triggered by useEffect
       const broadcastMediaStatus = useCallback(() => {
-        if (!joined || !localStreamRef.current) return; // Don't broadcast if not in a call or no stream
+        if (!joined || !localStreamRef.current) return; 
         const currentDisplayName = displayNameRef.current.trim() || `User-${peerIdRef.current ? peerIdRef.current.substring(0, 4) : 'anon'}`;
-        const payload = {
-            type: 'media-status-update',
-            audioEnabled: !isMutedRef.current,
-            videoEnabled: isVideoEnabledRef.current,
-            name: currentDisplayName
-        };
+        const payload = { type: 'media-status-update', audioEnabled: !isMutedRef.current, videoEnabled: isVideoEnabledRef.current, name: currentDisplayName };
         Object.values(connectionsRef.current).forEach(conn => { if (conn.open) conn.send(payload); });
-      }, [joined]); // Depends on `joined` to decide if it should run
+      }, [joined]); 
 
-      useEffect(() => {
-        broadcastMediaStatus(); // Call whenever isMuted, isVideoEnabled, or joined status changes relevantly
-      }, [isMuted, isVideoEnabled, joined, broadcastMediaStatus]);
+      useEffect(() => { broadcastMediaStatus(); }, [isMuted, isVideoEnabled, joined, broadcastMediaStatus]);
 
 
       const handleSignalingData = useCallback((data, conn) => { 
@@ -388,7 +384,7 @@
             break;
           default: console.warn("Unknown signaling data type:", data.type);
         }
-       }, [videos, callStartTime, updateOrAddParticipant, callPeer, connectAndCallPeer, roomId]); // Dependencies reviewed
+       }, [videos, callStartTime, updateOrAddParticipant, callPeer, connectAndCallPeer, roomId]); 
 
       const handleDisconnect = useCallback((pId, reason = "Unknown") => {
         console.log(`Handling disconnect for ${pId}, reason: ${reason}`);
@@ -398,7 +394,7 @@
                 const newActive = newVideos.find(v => v.isLocal)?.peerId || (newVideos.length > 0 ? newVideos[0]?.peerId : null); 
                 setActiveSpeakerId(newActive); 
             } 
-            if (pinnedPeerId === pId) setPinnedPeerId(null); // Unpin if disconnected user was pinned
+            if (pinnedPeerId === pId) setPinnedPeerId(null); 
             return newVideos; 
         });
         if (callsRef.current[pId]) { callsRef.current[pId].close(); delete callsRef.current[pId]; }
@@ -495,7 +491,7 @@
         if (!localStreamRef.current) return; 
         const newMutedState = !isMutedRef.current;
         localStreamRef.current.getAudioTracks().forEach(track => { track.enabled = !newMutedState; });
-        setIsMuted(newMutedState); // This will trigger useEffect for broadcastMediaStatus
+        setIsMuted(newMutedState); 
         updateOrAddParticipant(peerIdRef.current, undefined, displayNameRef.current, !newMutedState, isVideoEnabledRef.current, true);
        }, [updateOrAddParticipant]);
 
@@ -506,7 +502,7 @@
         if (newVideoEnabledState) {
             localStreamRef.current.getAudioTracks().forEach(track => { track.enabled = !isMutedRef.current; });
         }
-        setIsVideoEnabled(newVideoEnabledState); // This will trigger useEffect for broadcastMediaStatus
+        setIsVideoEnabled(newVideoEnabledState); 
         updateOrAddParticipant(peerIdRef.current, undefined, displayNameRef.current, !isMutedRef.current, newVideoEnabledState, true);
        }, [updateOrAddParticipant]);
 
@@ -517,17 +513,17 @@
       
       const handleToggleLayoutMenu = useCallback(() => {
         setShowLayoutMenu(prev => !prev);
-        if (!showLayoutMenu) showControlsTemporarily(); // Keep controls visible when menu opens
+        if (!showLayoutMenu) showControlsTemporarily(); 
       }, [showLayoutMenu, showControlsTemporarily]);
 
       const handleSetViewMode = useCallback((mode) => {
         setViewMode(mode);
-        setShowLayoutMenu(false); // Close menu after selection
+        setShowLayoutMenu(false); 
       }, []);
       
       const handleSetActiveSpeaker = useCallback((id) => {
         setActiveSpeakerId(id);
-        if (pinnedPeerId && pinnedPeerId !== id) setPinnedPeerId(null); // Clicking another speaker unpins current
+        if (pinnedPeerId && pinnedPeerId !== id) setPinnedPeerId(null); 
       }, [pinnedPeerId]);
 
       const handleToggleFilmstrip = useCallback(() => setIsFilmstripVisible(prev => !prev), []);
@@ -540,9 +536,9 @@
             }
             return newPinnedId;
         });
-      }, [viewMode]); // Added viewMode, setActiveSpeakerId dependencies if logic changes active speaker
+      }, [viewMode]); 
 
-      useEffect(() => { // If pinned user exists, make them active in speaker view
+      useEffect(() => { 
         if (pinnedPeerId && viewMode === 'speaker' && activeSpeakerId !== pinnedPeerId) {
             setActiveSpeakerId(pinnedPeerId);
         }
@@ -557,7 +553,7 @@
         <div ref={appContainerRef} className="w-full h-screen flex flex-col bg-gray-900">
           {!joined ? (
             <div className="flex-grow flex flex-col items-center justify-center p-4">
-              <h1 className="text-4xl font-bold text-purple-400 mb-2">SyncLite Pro - V4.6</h1>
+              <h1 className="text-4xl font-bold text-purple-400 mb-2">SyncLite Pro - V4.7</h1>
               <p className="text-xs text-gray-400 mb-6">Video Chat become Simple</p>
               <div className="bg-gray-800 p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-md space-y-5">
                 <p className="text-center text-sm flex items-center justify-center">
@@ -583,11 +579,11 @@
                 pinnedPeerId={pinnedPeerId} onTogglePin={handleTogglePin}
               />
               <div 
-                className={`absolute bottom-0 left-0 right-0 p-3 sm:p-4 z-20 transition-all duration-300 ease-in-out ${controlsVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full'}`}
-                onMouseEnter={() => { clearTimeout(controlsTimeoutRef.current); setControlsVisible(true); }} // Keep visible if mouse enters controls
-                onMouseLeave={showControlsTemporarily} // Start timer if mouse leaves controls
+                className={`absolute bottom-0 left-0 right-0 p-3 sm:p-4 z-20 transition-all duration-300 ease-in-out ${controlsVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full pointer-events-none'}`} // Added pointer-events-none when hidden
+                onMouseEnter={() => { clearTimeout(controlsTimeoutRef.current); setControlsVisible(true); }} 
+                onMouseLeave={showControlsTemporarily} 
               >
-                <div className="bg-gray-800/90 backdrop-blur-sm p-3 sm:p-3 rounded-xl shadow-md max-w-max mx-auto">
+                <div className="bg-gray-800/90 backdrop-blur-sm p-3 sm:p-3 rounded-xl shadow-md max-w-max mx-auto"> {/* pointer-events-auto on this if needed for children */}
                     <Controls 
                         isMuted={isMuted} isVideoEnabled={isVideoEnabled}
                         onToggleMute={toggleMute} onToggleVideo={toggleVideo}
